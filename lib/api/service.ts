@@ -275,6 +275,13 @@ export const ServicesAPI = {
         });
     },
 
+    async linkNetTVSubscriberCustomer(username: string, customerId: number) {
+        return apiRequest<{ success: boolean; message: string }>(
+            `/services/nettv/subscribers/${encodeURIComponent(username)}/link-customer`,
+            { method: 'POST', body: JSON.stringify({ customerId }) }
+        );
+    },
+
     async updateNetTVSubscriber(username: string, subscriberData: any) {
         return apiRequest<{ success: boolean; data: any }>(
             `/services/nettv/subscribers/${encodeURIComponent(username)}`,

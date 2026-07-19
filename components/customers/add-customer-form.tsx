@@ -41,6 +41,7 @@ import {
 } from "lucide-react"
 import { toast } from "react-hot-toast"
 import { apiRequest } from "@/lib/api"
+import { ServicesAPI } from "@/lib/api/service"
 import { useAuth } from "@/contexts/AuthContext"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Textarea } from "@/components/ui/textarea"
@@ -836,7 +837,7 @@ export function NetTVDialog({
   const [provinces, setProvinces] = useState<Province[]>([])
   const [loadingCountries, setLoadingCountries] = useState(false)
 
-  const [username, setUsername] = useState(defaultUsername || defaultEmail || "")
+  const [username, setUsername] = useState(buildNettvCredential(defaultUsername || defaultEmail))
   const [email, setEmail] = useState(defaultEmail)
   const [password, setPassword] = useState("")
   const [fname, setFname] = useState(defaultFname)
@@ -852,6 +853,13 @@ export function NetTVDialog({
   const [website, setWebsite] = useState("")
   const [longitude, setLongitude] = useState(defaultLng)
   const [latitude, setLatitude] = useState(defaultLat)
+  const [nettvStbs, setNettvStbs] = useState<any[]>([])
+  const [nettvPackageConfigs, setNettvPackageConfigs] = useState<any[]>([])
+  const [selectedStb, setSelectedStb] = useState("")
+  const [selectedPackageSaleId, setSelectedPackageSaleId] = useState("")
+  const [packageQty, setPackageQty] = useState(1)
+  const [nettvSubscriberRegistered, setNettvSubscriberRegistered] = useState(false)
+  const [nettvResellerBalance, setNettvResellerBalance] = useState<number | null>(null)
 
   // Document upload state
   const [documents, setDocuments] = useState<UploadedDocument[]>([])
@@ -924,6 +932,19 @@ export function NetTVDialog({
   // Fetch countries when dialog opens
   useEffect(() => {
     if (open) {
+      const candidateUsername = buildNettvCredential(defaultUsername || defaultEmail)
+      ServicesAPI.getNetTVSubscriber(candidateUsername).then((response: any) => {
+        const subscriber = response?.data?.subscriber || response?.data
+        const subscriberId = subscriber?.id ? String(subscriber.id) : undefined
+        setNettvSubscriberRegistered(Boolean(subscriber?.username || subscriber?.id))
+        return ServicesAPI.getNetTVSTBs(1, 100, subscriberId)
+      }).then((response: any) => {
+        const payload = response?.data
+        setNettvStbs(Array.isArray(payload) ? payload : (payload?.data || payload?.items || payload?.stbs || []))
+      }).catch(() => { setNettvSubscriberRegistered(false); setNettvStbs([]) })
+      ServicesAPI.getNetTVResellerInfo().then((response: any) => {
+        setNettvResellerBalance(Number(response?.data?.creditBalance?.credit_balance ?? response?.data?.credit_balance?.credit_balance ?? 0))
+      }).catch(() => setNettvResellerBalance(null))
       const fetchCountries = async () => {
         setLoadingCountries(true)
         try {
@@ -939,17 +960,18 @@ export function NetTVDialog({
               if (!defaultProvince && requestedProvince) setSelectedProvinceId(requestedProvince.id)
             }
 
-            // If defaultProvince is provided, try to find matching province
+            let resolvedProvince: Province | undefined
             if (defaultProvince) {
               const cleanDefault = String(defaultProvince).toLowerCase().replace(/province/gi, "").replace(/state/gi, "").replace(/no\./gi, "").trim();
-              const foundProvince = response.data.flatMap((c: Country) => c.provinces).find((p: Province) => {
+              resolvedProvince = response.data.flatMap((c: Country) => c.provinces || []).find((p: Province) => {
                 const cleanName = p.name.toLowerCase().replace(/province/gi, "").replace(/state/gi, "").replace(/no\./gi, "").trim();
                 return cleanName === cleanDefault || cleanName.includes(cleanDefault) || cleanDefault.includes(cleanName);
               })
-              if (foundProvince) {
-                setSelectedProvinceId(foundProvince.id)
-                setSelectedCountryId(foundProvince.country_id)
-              }
+            }
+            resolvedProvince ||= nepal?.provinces?.find((province: Province) => province.id === 3891) || nepal?.provinces?.[0]
+            if (resolvedProvince) {
+              setSelectedProvinceId(resolvedProvince.id)
+              setSelectedCountryId(resolvedProvince.country_id)
             }
           } else {
             toast.error("Failed to load countries")
@@ -964,6 +986,22 @@ export function NetTVDialog({
       fetchCountries()
     }
   }, [open, defaultProvince])
+
+  useEffect(() => {
+    if (!selectedStb) {
+      setNettvPackageConfigs([])
+      setSelectedPackageSaleId("")
+      return
+    }
+    ServicesAPI.getNetTVPackageConfigs(selectedStb).then((response: any) => {
+      const payload = response?.data
+      const groups = Array.isArray(payload) ? payload : (payload?.data || payload?.items || payload?.packages || [])
+      setNettvPackageConfigs(groups.flatMap((group: any) => {
+        const sales = Array.isArray(group?.package_for_sale) ? group.package_for_sale : []
+        return sales.length ? sales.map((sale: any) => ({ ...sale, package_type: group.type, package_name: group.name })) : [group]
+      }))
+    }).catch(() => setNettvPackageConfigs([]))
+  }, [selectedStb])
 
   // Update provinces when country changes
   useEffect(() => {
@@ -1001,7 +1039,7 @@ export function NetTVDialog({
   // Populate defaults when dialog opens
   useEffect(() => {
     if (open) {
-      setUsername(defaultUsername || defaultEmail || "")
+      setUsername(buildNettvCredential(defaultUsername || defaultEmail))
       setPassword(defaultPassword || "")
       setEmail(defaultEmail)
       setFname(defaultFname)
@@ -1013,6 +1051,8 @@ export function NetTVDialog({
       setMobileNo(defaultMobile)
       setLongitude(defaultLng)
       setLatitude(defaultLat)
+      setSelectedCountryId(156)
+      setSelectedProvinceId(3891)
       setNameErrors({ fname: "", lname: "" })
       setDocuments([])
     }
@@ -1039,16 +1079,16 @@ export function NetTVDialog({
     }))
 
     const payload: any = {
-      username,
+      username: buildNettvCredential(username),
       password,
-      email,
+      email: email.trim(),
       status: "0", // active
-      fname,
-      mname,
-      lname,
-      address,
-      city,
-      district,
+      fname: fname.trim(),
+      mname: mname.trim(),
+      lname: lname.trim(),
+      address: address.trim(),
+      city: city.trim(),
+      district: district.trim(),
       province: province?.id || "",
       country: country?.id || "",
       phone_no,
@@ -1056,6 +1096,16 @@ export function NetTVDialog({
       longitude: longitude || "0",
       latitude: latitude || "0",
       website,
+      provisioning: selectedStb ? {
+        stb: { serial: selectedStb, status: "1" },
+        package: selectedPackageSaleId ? {
+          pos: "web",
+          created_by: username,
+          payment_gateway: "reseller_wallet",
+          packages: [{ package_sale_id: Number(selectedPackageSaleId), qty: packageQty }],
+          send_mail: 0,
+        } : null,
+      } : undefined,
     }
     if (docsPayload.length > 0) {
       payload.documents = docsPayload
@@ -1245,6 +1295,39 @@ export function NetTVDialog({
               placeholder="https://example.com"
             />
           </div>
+
+          {nettvSubscriberRegistered && <div className="space-y-4 rounded-lg border p-4">
+            <div>
+              <Label className="text-base font-semibold">Set-Top Box (STB) & Service Provisioning</Label>
+              <p className="text-xs text-muted-foreground">Optionally link an available STB and assign its package during subscriber provisioning.</p>
+              {nettvResellerBalance !== null && <p className="mt-1 text-sm font-medium text-emerald-600">Reseller wallet: Rs. {nettvResellerBalance.toFixed(2)}</p>}
+            </div>
+            <div className="space-y-2">
+              <Label>Select Linked STB</Label>
+              <select value={selectedStb} onChange={event => setSelectedStb(event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm">
+                <option value="">No STB</option>
+                {nettvStbs.map((stb: any) => {
+                  const serial = String(stb.serial || stb.mac || stb.serial_number || "")
+                  return <option key={serial} value={serial}>{serial} · {stb.model?.name || stb.model_name || stb.vendor?.name || "Default"}</option>
+                })}
+              </select>
+            </div>
+            {selectedStb && <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Assign Subscription Package</Label>
+                <select value={selectedPackageSaleId} onChange={event => setSelectedPackageSaleId(event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm">
+                  <option value="">Select package configuration</option>
+                  {nettvPackageConfigs.map((pkg: any, index: number) => {
+                    const id = String(pkg.package_sale_id || pkg.sale_id || pkg.id || "")
+                    const label = pkg.display_name || pkg.name || pkg.package_name || pkg.title || `Package #${id}`
+                    const price = pkg.price_with_vat ?? pkg.package_price ?? pkg.price
+                    return <option key={`${id}-${index}`} value={id}>{label}{price !== undefined ? ` · Rs. ${price}` : ""}{pkg.package_type ? ` · ${String(pkg.package_type).replace(/_/g, " ")}` : ""}</option>
+                  })}
+                </select>
+              </div>
+              <div className="space-y-2"><Label>Quantity</Label><Input type="number" min={1} value={packageQty} onChange={event => setPackageQty(Math.max(1, Number(event.target.value) || 1))} /></div>
+            </div>}
+          </div>}
 
           {/* Document Upload Section */}
           <div className="space-y-3 rounded-lg border p-4">
@@ -2385,7 +2468,8 @@ export function AddCustomerForm() {
     return billing.find(service => service.config?.isDefault === true) || billing[0] || null
   }, [servicesCatalog])
   const accountingServiceCode = accountingService?.code || "TSHUL"
-  const accountingRequiresPan = accountingService?.config?.requiresPan
+  const accountingRequiresPan = accountingService?.config?.is_pan_necessary
+    ?? accountingService?.config?.requiresPan
     ?? accountingService?.config?.panRequired
     ?? accountingService?.config?.requirePan
     ?? accountingServiceCode === "TSHUL"

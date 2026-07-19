@@ -39,28 +39,29 @@ const defaultServiceTemplates: Record<string, { baseUrl: string; apiVersion: str
         baseUrl: "https://kisan-net.tshul.app/api",
         apiVersion: "v1",
         config: JSON.stringify({
+            is_pan_necessary: true,
             timeout: 30000,
             retryAttempts: 3,
             demoCredentials: {
-                username: "demo@kisan.net.np",
-                password: "demo@kisan.net.np@123"
+                username: "",
+                password: ""
             }
         }, null, 2)
     },
     NEPURIX: {
         baseUrl: "https://your-nepurix-host.example",
         apiVersion: "v1",
-        config: JSON.stringify({ isDefault: true, timeout: 30000, retryAttempts: 3 }, null, 2)
+        config: JSON.stringify({ isDefault: true, is_pan_necessary: false, timeout: 30000, retryAttempts: 3 }, null, 2)
     },
     RADIUS: {
         baseUrl: "http://10.3.2.6:3005/api",
         apiVersion: "v1",
         config: JSON.stringify({
             timeout: 10000,
-            secret: "Kisan@radius",
+            secret: "",
             defaultCredentials: {
-                username: "radius",
-                password: "Kisan@radius"
+                username: "",
+                password: ""
             }
         }, null, 2)
     },
@@ -72,9 +73,9 @@ const defaultServiceTemplates: Record<string, { baseUrl: string; apiVersion: str
             api_port: 80,
             version: "2.0.0",
             defaultCredentials: {
-                pbx_ip: "10.3.2.50",
-                username: "kisan",
-                password: "Kisan@123"
+                pbx_ip: "",
+                username: "",
+                password: ""
             }
         }, null, 2)
     },
@@ -86,15 +87,15 @@ const defaultServiceTemplates: Record<string, { baseUrl: string; apiVersion: str
             ari_port: 8088,
             ari_app_name: "kisan",
             defaultCredentials: {
-                ami_host: "10.3.2.51",
-                ami_port: "5038",
-                ami_username: "kisan_ami",
-                ami_password: "AmiPassword@123",
-                ari_host: "10.3.2.51",
-                ari_port: "8088",
-                ari_username: "kisan_ari",
-                ari_password: "AriPassword@123",
-                ari_app_name: "kisan"
+                ami_host: "",
+                ami_port: "",
+                ami_username: "",
+                ami_password: "",
+                ari_host: "",
+                ari_port: "",
+                ari_username: "",
+                ari_password: "",
+                ari_app_name: ""
             }
         }, null, 2)
     },
@@ -105,10 +106,12 @@ const defaultServiceTemplates: Record<string, { baseUrl: string; apiVersion: str
             timeout: 60000,
             retry: 3,
             defaultCredentials: {
-                api_key: "5c232ef1fdf138",
-                api_secret: "72b7b119b2b98983e1ad33a385b08df489",
+                api_key: "",
+                api_secret: "",
                 app_key: "",
-                app_secret: ""
+                app_secret: "",
+                reseller_id: "",
+                reseller_username: ""
             }
         }, null, 2)
     },
@@ -248,6 +251,25 @@ export function ServiceConfigureDialog({
         setFormData((prev) => ({ ...prev, [field]: value }));
     };
 
+    const accountingService = ["TSHUL", "NEPURIX"].includes(service.service.code);
+    const panNecessary = (() => {
+        try {
+            const config = JSON.parse(formData.config || "{}");
+            return config.is_pan_necessary ?? config.requiresPan ?? service.service.code === "TSHUL";
+        } catch {
+            return service.service.code === "TSHUL";
+        }
+    })();
+    const setPanNecessary = (checked: boolean) => {
+        try {
+            const config = JSON.parse(formData.config || "{}");
+            config.is_pan_necessary = checked;
+            handleInputChange("config", JSON.stringify(config, null, 2));
+        } catch {
+            toast.error("Fix the configuration JSON before changing PAN validation");
+        }
+    };
+
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="sm:max-w-[500px]">
@@ -273,6 +295,14 @@ export function ServiceConfigureDialog({
                                 The base URL for the service API (e.g., https://api.example.com)
                             </p>
                         </div>
+
+                        {accountingService && <div className="flex items-center justify-between rounded-lg border p-3">
+                            <div className="space-y-0.5">
+                                <Label htmlFor="panNecessary">PAN number required</Label>
+                                <p className="text-xs text-gray-500">Require a valid PAN when provisioning customers to {service.service.name}.</p>
+                            </div>
+                            <Switch id="panNecessary" checked={Boolean(panNecessary)} onCheckedChange={setPanNecessary} />
+                        </div>}
 
                         <div className="grid gap-2">
                             <Label htmlFor="apiVersion">API Version</Label>

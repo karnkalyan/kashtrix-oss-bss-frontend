@@ -490,6 +490,7 @@ interface Customer {
     status: string
     validUntil: string | null
     serviceData: any
+    externalUsername?: string | null
     createdAt: string
     updatedAt: string
     service: {
@@ -1442,10 +1443,20 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
   const [reprovisionUsername, setReprovisionUsername] = useState("")
   const [reprovisionPassword, setReprovisionPassword] = useState("")
   const [provisionServicesOpen, setProvisionServicesOpen] = useState(false)
+  const [accountingProvision, setAccountingProvision] = useState({ code: "TSHUL", name: "Account Billing", requiresPan: true })
   const [identityOpen, setIdentityOpen] = useState(false)
   const [identityIdNumber, setIdentityIdNumber] = useState("")
   const [identityPanNumber, setIdentityPanNumber] = useState("")
   const [identitySaving, setIdentitySaving] = useState(false)
+  useEffect(() => {
+    apiRequest<any>("/services/isp", { suppressToast: true }).then((response) => {
+      const services = Array.isArray(response) ? response : (response?.data || [])
+      const selected = services.find((item: any) => ["TSHUL", "NEPURIX"].includes(item?.service?.code) && item.isActive && item.isEnabled)
+      if (!selected) return
+      const code = selected.service.code
+      setAccountingProvision({ code, name: selected.service.name || code, requiresPan: selected.config?.is_pan_necessary ?? selected.config?.requiresPan ?? selected.config?.panRequired ?? code === "TSHUL" })
+    }).catch(() => undefined)
+  }, [])
   const [documentUploadOpen, setDocumentUploadOpen] = useState(false)
   const [documentType, setDocumentType] = useState("idProof")
   const [documentFile, setDocumentFile] = useState<File | null>(null)
@@ -2749,6 +2760,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
 
   const handleReprovisionNettv = async (nettvData: any) => {
     try {
+      const wasAlreadyLinked = Boolean(getLinkedNettvUsername(customer))
       setServiceActionLoading("nettv")
       const response = await apiRequest<{ success: boolean; message: string }>(`/customer/${customerId}/reprovision/nettv`, {
         method: 'POST',
@@ -2757,7 +2769,11 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
       })
       if (response.success) {
         toast.success(response.message || "NetTV reprovisioned successfully")
-        fetchCustomerData()
+        await fetchCustomerData()
+        if (!wasAlreadyLinked && !nettvData?.provisioning?.stb?.serial) {
+          toast.success("Subscriber created. Select the customer's STB and subscription package to complete NetTV provisioning.")
+          setNettvProvisionOpen(true)
+        }
       } else {
         toast.error("NetTV reprovisioning failed")
       }
@@ -3209,6 +3225,19 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
     city?: string
     zipCode?: string
   }
+  const planUsagePercent = latestSubscription ? Math.max(0, Math.min(100, 100 - (daysUntilExpiry / 30) * 100)) : 0
+  const profileHighlights = [
+    { label: "Subscriber ID", value: customer.customerUniqueId || `CUST-${customer.id.toString().padStart(3, "0")}`, icon: Shield },
+    { label: "Primary Login", value: customer.connectionUsers[0]?.username || "Not assigned", icon: Key },
+    { label: "Service Plan", value: customer.subscribedPkg?.packageName || "Not subscribed", icon: Package },
+    { label: "Balance Due", value: formatPrice(dueAmount), icon: CreditCard },
+  ]
+  const overviewSignals = [
+    { label: "ACS", value: String(customer.ontRealtimeStatus || "offline").toUpperCase(), online: String(customer.ontRealtimeStatus || "").toLowerCase() === "online" },
+    { label: "RADIUS", value: String(customer.radiusRealtimeStatus || "offline").toUpperCase(), online: String(customer.radiusRealtimeStatus || "").toLowerCase() === "online" },
+    { label: "Provisioning", value: String(getProvisioningStatus()).toUpperCase(), online: String(getProvisioningStatus()).toLowerCase() === "active" },
+    { label: "Devices", value: String(customer.devices.length), online: customer.devices.length > 0 },
+  ]
 
   return (
     <div className="customer-profile-shell space-y-6">
@@ -3220,7 +3249,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
         defaultFname={customer.firstName || ""}
         defaultLname={customer.lastName || ""}
         defaultEmail={customer.email || ""}
-        defaultUsername={buildNettvCredential(customer.connectionUsers?.[0]?.username || customer.customerUniqueId)}
+        defaultUsername={getLinkedNettvUsername(customer) || buildNettvCredential(customer.connectionUsers?.[0]?.username || customer.customerUniqueId)}
         defaultPassword={buildNettvCredential(customer.connectionUsers?.[0]?.password)}
         defaultAddress={customer.street || customerProfileData.address || ""}
         defaultCity={customerProfileData.city || customer.district || ""}
@@ -3229,8 +3258,8 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
         defaultZip={customerProfileData.zipCode || ""}
         defaultPhone={customer.phoneNumber || ""}
         defaultMobile={customer.secondaryPhone || customer.phoneNumber || ""}
-        defaultLat={(customer as any).lead?.metadata?.latitude || ""}
-        defaultLng={(customer as any).lead?.metadata?.longitude || ""}
+        defaultLat={String((customer as any).lead?.metadata?.latitude ?? (customer as any).lead?.lat ?? (customer as any).lat ?? "")}
+        defaultLng={String((customer as any).lead?.metadata?.longitude ?? (customer as any).lead?.lon ?? (customer as any).lon ?? "")}
       />
 
       <Dialog open={provisionServicesOpen} onOpenChange={setProvisionServicesOpen}>
@@ -3251,10 +3280,10 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
               <Button type="button" onClick={() => { setProvisionServicesOpen(false); setNettvProvisionOpen(true) }}>Configure</Button>
             </div>
             <div className="flex items-center justify-between gap-4 rounded-lg border p-4">
-              <div><div className="font-medium">Account Billing</div><div className="text-sm text-muted-foreground">Requires an ID number and valid 9-digit PAN.</div></div>
+              <div><div className="font-medium">{accountingProvision.name} Billing</div><div className="text-sm text-muted-foreground">Requires an ID number{accountingProvision.requiresPan ? " and valid 9-digit PAN" : ""}.</div></div>
               <Button type="button" disabled={serviceActionLoading === "account"} onClick={() => {
-                if (!customer.idNumber || !/^\d{9}$/.test(customer.panNo || "")) {
-                  toast.error("Update the customer ID and 9-digit PAN before provisioning Account Billing.")
+                if (!customer.idNumber || (accountingProvision.requiresPan && !/^\d{9}$/.test(customer.panNo || ""))) {
+                  toast.error(`Update the customer ID${accountingProvision.requiresPan ? " and 9-digit PAN" : ""} before provisioning Account Billing.`)
                   setProvisionServicesOpen(false)
                   openIdentityDialog()
                   return
@@ -3635,59 +3664,64 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
         </DialogContent>
       </Dialog>
 
-      <CardContainer className="customer-identity-card border-primary/15 shadow-[0_18px_55px_rgba(74,27,122,.09)]">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-            <Avatar className="h-16 w-16 ring-2 ring-primary/20 ring-offset-2">
+      <section className="overflow-hidden rounded-xl border bg-card shadow-sm">
+        <div className="grid gap-0 lg:grid-cols-[360px_1fr]">
+          <div className="border-b bg-muted/35 p-5 lg:border-b-0 lg:border-r">
+            <div className="flex items-start gap-4">
+              <Avatar className="h-20 w-20 rounded-xl ring-1 ring-border">
               {getCustomerProfilePictureUrl() && (
                 <AvatarImage src={getCustomerProfilePictureUrl()} alt={getCustomerFullName()} />
               )}
-              <AvatarFallback className="bg-gradient-to-br from-primary to-primary/70 text-white">
+              <AvatarFallback className="rounded-xl bg-primary text-xl text-primary-foreground">
                 {getCustomerInitials()}
               </AvatarFallback>
             </Avatar>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="mr-3"><p className="text-[11px] font-semibold uppercase tracking-[.14em] text-muted-foreground">Customer profile</p><h2 className="text-2xl font-semibold tracking-tight">{getCustomerFullName()}</h2></div>
-                <div className="flex flex-wrap items-center gap-2">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Subscriber profile</p>
+                <h2 className="mt-1 truncate text-2xl font-semibold tracking-tight">{getCustomerFullName()}</h2>
+                <div className="mt-3 flex flex-wrap gap-2">
                   {getStatusBadge(customer.status)}
-                  {latestSubscription?.isTrial && (
-                    <Badge className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white border-0">TRIAL</Badge>
-                  )}
-                  {customer.isRechargeable && (
-                    <Badge className="bg-gradient-to-r from-purple-500 to-pink-600 text-white border-0">RECHARGEABLE</Badge>
-                  )}
-                  {customer.referencedById && (
-                    <Badge className="bg-gradient-to-r from-cyan-500 to-teal-600 text-white border-0">REFERRED</Badge>
-                  )}
-                  <Badge className={String(customer.ontRealtimeStatus || '').toLowerCase() === 'online' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}>
-                    ACS {String(customer.ontRealtimeStatus || 'offline').toUpperCase()}
-                  </Badge>
-                  <Badge className={String(customer.radiusRealtimeStatus || '').toLowerCase() === 'online' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}>
-                    RADIUS {String(customer.radiusRealtimeStatus || 'offline').toUpperCase()}
-                  </Badge>
+                  {latestSubscription?.isTrial && <Badge variant="secondary">Trial</Badge>}
+                  {customer.isRechargeable && <Badge variant="outline">Rechargeable</Badge>}
+                  {customer.referencedById && <Badge variant="outline">Referred</Badge>}
                 </div>
               </div>
-              <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 text-sm text-muted-foreground mt-1">
-                <div className="flex items-center"><Shield className="mr-1 h-4 w-4" /> ID Number: {customer.idNumber || "N/A"}</div>
-                <button type="button" className={`flex items-center hover:text-green-600 ${!voipEnabled ? "cursor-not-allowed opacity-50 hover:text-muted-foreground" : ""}`} onClick={() => handleOutboundCall(customer.phoneNumber)}>
-                  <Phone className="mr-1 h-4 w-4" /> Mobile: {customer.phoneNumber}
-                </button>
-                {customer.secondaryPhone && (
-                  <button type="button" className={`flex items-center hover:text-green-600 ${!voipEnabled ? "cursor-not-allowed opacity-50 hover:text-muted-foreground" : ""}`} onClick={() => handleOutboundCall(customer.secondaryPhone)}>
-                    <Phone className="mr-1 h-4 w-4" /> Secondary: {customer.secondaryPhone}
-                  </button>
-                )}
-                <div className="flex items-center"><Mail className="mr-1 h-4 w-4" /> Email: {customer.email}</div>
-                <div className="flex items-center"><Calendar className="mr-1 h-4 w-4" /> Member Since: {formatDate(customer.createdAt)}</div>
-              </div>
-              <div className="text-xs text-muted-foreground mt-2">
-                Customer ID: {customer.customerUniqueId || `CUST-${customer.id.toString().padStart(3, '0')}`} | ISP: {customer.isp.companyName} | Lead ID: {customer.leadId || "N/A"}
+            </div>
+            <div className="mt-5 space-y-2 text-sm">
+              <button type="button" className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-background ${!voipEnabled ? "cursor-not-allowed opacity-60" : ""}`} onClick={() => handleOutboundCall(customer.phoneNumber)}>
+                <Phone className="h-4 w-4 text-muted-foreground" /> {customer.phoneNumber || "No mobile number"}
+              </button>
+              <div className="flex items-center gap-2 rounded-md px-2 py-1.5"><Mail className="h-4 w-4 text-muted-foreground" /> <span className="truncate">{customer.email || "No email address"}</span></div>
+              <div className="flex items-center gap-2 rounded-md px-2 py-1.5"><MapPin className="h-4 w-4 text-muted-foreground" /> <span className="truncate">{[customer.street, customer.district, customer.state].filter(Boolean).join(", ") || "No address saved"}</span></div>
+              <div className="flex items-center gap-2 rounded-md px-2 py-1.5"><Calendar className="h-4 w-4 text-muted-foreground" /> Member since {formatDate(customer.createdAt)}</div>
+            </div>
+          </div>
+          <div className="grid gap-3 p-5 sm:grid-cols-2 xl:grid-cols-4">
+            {profileHighlights.map((item) => {
+              const Icon = item.icon
+              return (
+                <div key={item.label} className="rounded-lg border bg-background p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs font-medium text-muted-foreground">{item.label}</span>
+                    <Icon className="h-4 w-4 text-primary" />
+                  </div>
+                  <div className="mt-3 truncate text-lg font-semibold">{item.value}</div>
+                </div>
+              )
+            })}
+            <div className="sm:col-span-2 xl:col-span-4">
+              <div className="grid gap-2 sm:grid-cols-4">
+                {overviewSignals.map((signal) => (
+                  <div key={signal.label} className="flex items-center justify-between rounded-md border bg-muted/20 px-3 py-2 text-xs">
+                    <span className="font-medium text-muted-foreground">{signal.label}</span>
+                    <span className={signal.online ? "font-semibold text-emerald-600" : "font-semibold text-amber-600"}>{signal.value}</span>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
         </div>
-      </CardContainer>
+      </section>
 
       <section className="customer-service-strip grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Customer service summary">
         <div className="customer-service-tile">
@@ -3783,6 +3817,50 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4">
+          <section className="grid gap-4 xl:grid-cols-[1.25fr_.75fr]">
+            <div className="rounded-xl border bg-card p-4 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Service command summary</p>
+                  <h3 className="mt-1 text-xl font-semibold">{customer.subscribedPkg?.packageName || "No active package"}</h3>
+                </div>
+                <Badge className={daysUntilExpiry < 7 ? "bg-red-600 text-white" : daysUntilExpiry < 30 ? "bg-amber-600 text-white" : "bg-emerald-600 text-white"}>
+                  {latestSubscription ? `${daysUntilExpiry} days remaining` : "No subscription"}
+                </Badge>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <div className="rounded-lg bg-muted/30 p-3">
+                  <div className="text-xs text-muted-foreground">Speed Profile</div>
+                  <div className="mt-1 font-semibold">{customer.subscribedPkg?.packagePlanDetails?.downSpeed || "N/A"} / {customer.subscribedPkg?.packagePlanDetails?.upSpeed || "N/A"} Mbps</div>
+                </div>
+                <div className="rounded-lg bg-muted/30 p-3">
+                  <div className="text-xs text-muted-foreground">Primary Device</div>
+                  <div className="mt-1 truncate font-semibold">{getDeviceModel()}</div>
+                </div>
+                <div className="rounded-lg bg-muted/30 p-3">
+                  <div className="text-xs text-muted-foreground">Active Sessions</div>
+                  <div className="mt-1 font-semibold">{customer.connectionUsers.filter((item) => item.isActive).length} RADIUS user(s)</div>
+                </div>
+              </div>
+              <div className="mt-4">
+                <div className="mb-2 flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Current cycle progress</span>
+                  <span className="font-medium">{latestSubscription ? `${Math.round(planUsagePercent)}% used` : "N/A"}</span>
+                </div>
+                <Progress value={planUsagePercent} className="h-2" />
+              </div>
+            </div>
+            <div className="rounded-xl border bg-card p-4 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Quick facts</p>
+              <div className="mt-3 grid gap-2 text-sm">
+                <div className="flex justify-between gap-4 border-b pb-2"><span className="text-muted-foreground">ISP</span><span className="font-medium">{customer.isp.companyName}</span></div>
+                <div className="flex justify-between gap-4 border-b pb-2"><span className="text-muted-foreground">ID / PAN</span><span className="font-medium">{customer.idNumber || "N/A"} / {customer.panNo || "N/A"}</span></div>
+                <div className="flex justify-between gap-4 border-b pb-2"><span className="text-muted-foreground">Lead</span><span className="font-medium">{customer.leadId || "N/A"}</span></div>
+                <div className="flex justify-between gap-4"><span className="text-muted-foreground">Last update</span><span className="font-medium">{formatDate(customer.updatedAt)}</span></div>
+              </div>
+            </div>
+          </section>
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <CardContainer title="Account Details" className="bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 border-0 shadow-md">
               <div className="space-y-3">
@@ -5822,4 +5900,9 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
 const buildNettvCredential = (value?: string | null) => {
   const cleaned = String(value || "").trim().replace(/^_?nettv/i, "").replace(/_nettv$/i, "")
   return cleaned ? `${cleaned}_nettv` : ""
+}
+
+const getLinkedNettvUsername = (customer?: Customer | null) => {
+  const app = customer?.subscribedApps?.find((item: any) => String(item.service?.code || "").toUpperCase() === "NETTV") as any
+  return String(app?.externalUsername || app?.serviceData?.username || app?.serviceData?.subscriber?.username || "").trim()
 }

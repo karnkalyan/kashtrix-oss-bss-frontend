@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import dynamic from "next/dynamic"
 import { ArrowLeft, Eye, Info, KeyRound, Loader2, MapPin, Package, Plus, RefreshCw, Repeat, Save, Search, Trash2, Tv, UserCheck, Users, Wrench, AlertTriangle } from "lucide-react"
 import { ServicesAPI } from "@/lib/api/service"
+import { apiRequest } from "@/lib/api"
 import { NetTVDialog } from "@/components/customers/add-customer-form"
 import { CardContainer } from "@/components/ui/card-container"
 import { Button } from "@/components/ui/button"
@@ -343,6 +344,37 @@ export function NettvDashboard() {
   const [printLookupOpen, setPrintLookupOpen] = useState(false)
   const [statusChanging, setStatusChanging] = useState("")
   const [requestedSubscriber, setRequestedSubscriber] = useState("")
+  const [linkSubscriber, setLinkSubscriber] = useState<any>(null)
+  const [linkCustomers, setLinkCustomers] = useState<any[]>([])
+  const [linkCustomerId, setLinkCustomerId] = useState("")
+  const [linkSaving, setLinkSaving] = useState(false)
+
+  const openCustomerLink = async (subscriber: any) => {
+    setLinkSubscriber(subscriber)
+    setLinkCustomerId("")
+    try {
+      const response: any = await apiRequest("/customer?limit=5000")
+      setLinkCustomers(unwrapList(response))
+    } catch (error: any) {
+      toast.error(error.message || "Failed to load customers")
+    }
+  }
+
+  const linkCustomer = async () => {
+    const username = valueOf(linkSubscriber, ["username", "user_name", "customer_username"], "")
+    if (!username || !linkCustomerId) return
+    setLinkSaving(true)
+    try {
+      await ServicesAPI.linkNetTVSubscriberCustomer(username, Number(linkCustomerId))
+      toast.success("NetTV subscriber linked to customer")
+      setLinkSubscriber(null)
+      await fetchData()
+    } catch (error: any) {
+      toast.error(error.message || "Failed to link customer")
+    } finally {
+      setLinkSaving(false)
+    }
+  }
 
   const fetchAllNetTVPages = async (fetcher: (page: number, perPage: number) => Promise<{ data: any }>) => {
     const perPage = 100
@@ -1465,7 +1497,9 @@ export function NettvDashboard() {
                             </span>
                           </div>
                         ) : (
-                          <span className="text-xs text-slate-400">Unlinked</span>
+                          <Button variant="outline" size="sm" onClick={() => openCustomerLink(subscriber)}>
+                            <UserCheck className="mr-1 h-3.5 w-3.5" /> Link customer
+                          </Button>
                         )}
                       </TableCell>
                       <TableCell>
@@ -1501,6 +1535,20 @@ export function NettvDashboard() {
             </TableBody>
           </Table>
         </div>
+
+        <Dialog open={Boolean(linkSubscriber)} onOpenChange={(open) => !open && setLinkSubscriber(null)}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader><DialogTitle>Link NetTV Subscriber</DialogTitle><DialogDescription>Choose the local customer associated with this NetTV username.</DialogDescription></DialogHeader>
+            <div className="space-y-2 py-3">
+              <Label htmlFor="nettv-local-customer">Local customer</Label>
+              <select id="nettv-local-customer" value={linkCustomerId} onChange={event => setLinkCustomerId(event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm">
+                <option value="">Select customer</option>
+                {linkCustomers.map(customer => <option key={customer.id} value={customer.id}>{customer.customerUniqueId} · {customer.firstName || customer.lead?.firstName || ""} {customer.lastName || customer.lead?.lastName || ""}</option>)}
+              </select>
+            </div>
+            <DialogFooter><Button variant="outline" onClick={() => setLinkSubscriber(null)}>Cancel</Button><Button onClick={linkCustomer} disabled={!linkCustomerId || linkSaving}>{linkSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Link customer</Button></DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <div className="mt-4 flex flex-col gap-3 text-sm text-muted-foreground md:flex-row md:items-center md:justify-between">
           <div>Showing {paginatedSubscribers.length ? (page - 1) * limit + 1 : 0} to {Math.min(page * limit, filteredSubscribers.length)} of {filteredSubscribers.length}</div>
