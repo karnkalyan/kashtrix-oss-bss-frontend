@@ -950,10 +950,11 @@ export function NetTVDialog({
         try {
           const response = await apiRequest("/services/nettv/countries")
           if (response.success && response.data) {
-            setCountries(response.data)
+            const normalizedCountries = response.data.map((country: Country) => ({ ...country, id: Number(country.id), provinces: (country.provinces || []).map((province: Province) => ({ ...province, id: Number(province.id), country_id: Number(province.country_id) })) }))
+            setCountries(normalizedCountries)
             
             // Set default country to Nepal (id 156 or name Nepal)
-            const nepal = response.data.find((c: Country) => c.name.toLowerCase() === "nepal" || c.id === 156)
+            const nepal = normalizedCountries.find((c: Country) => c.name.toLowerCase() === "nepal" || c.id === 156)
             if (nepal) {
               setSelectedCountryId(nepal.id)
               const requestedProvince = nepal.provinces?.find((province: Province) => province.id === 3891)
@@ -963,7 +964,7 @@ export function NetTVDialog({
             let resolvedProvince: Province | undefined
             if (defaultProvince) {
               const cleanDefault = String(defaultProvince).toLowerCase().replace(/province/gi, "").replace(/state/gi, "").replace(/no\./gi, "").trim();
-              resolvedProvince = response.data.flatMap((c: Country) => c.provinces || []).find((p: Province) => {
+              resolvedProvince = normalizedCountries.flatMap((c: Country) => c.provinces || []).find((p: Province) => {
                 const cleanName = p.name.toLowerCase().replace(/province/gi, "").replace(/state/gi, "").replace(/no\./gi, "").trim();
                 return cleanName === cleanDefault || cleanName.includes(cleanDefault) || cleanDefault.includes(cleanName);
               })
@@ -1007,7 +1008,11 @@ export function NetTVDialog({
   useEffect(() => {
     if (selectedCountryId) {
       const country = countries.find(c => c.id === selectedCountryId)
-      setProvinces(country?.provinces || [])
+      const nextProvinces = country?.provinces || []
+      setProvinces(nextProvinces)
+      if (!nextProvinces.some(province => province.id === selectedProvinceId)) {
+        setSelectedProvinceId(selectedCountryId === 156 ? (nextProvinces.find(province => province.id === 3891)?.id || nextProvinces[0]?.id || null) : (nextProvinces[0]?.id || null))
+      }
     } else {
       setProvinces([])
     }
@@ -1118,12 +1123,13 @@ export function NetTVDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
         <DialogHeader>
-          <DialogTitle>Configure NETTV Service</DialogTitle>
+          <DialogTitle>{nettvSubscriberRegistered ? "NETTV Device & Subscription Provisioning" : "Configure NETTV Service"}</DialogTitle>
           <DialogDescription>
-            Enter the NETTV subscriber details. Fields marked * are required.
+            {nettvSubscriberRegistered ? `Subscriber ${buildNettvCredential(username)} is registered. Link the customer's STB and assign a subscription package.` : "Enter the NETTV subscriber details. Fields marked * are required."}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-4">
+          {!nettvSubscriberRegistered && <>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="nettvUsername">Username *</Label>
@@ -1220,30 +1226,17 @@ export function NetTVDialog({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="nettvCountry">Country *</Label>
-              <SearchableSelect
-                options={countries.map(c => ({ value: c.id.toString(), label: c.name }))}
-                value={selectedCountryId?.toString() || ""}
-                onValueChange={(value) => {
-                  const val = Array.isArray(value) ? value[0] : value;
-                  setSelectedCountryId(parseInt(val || ""));
-                  setSelectedProvinceId(null)
-                }}
-                placeholder={loadingCountries ? "Loading countries..." : "Select country"}
-                disabled={loadingCountries}
-              />
+              <Select value={selectedCountryId?.toString() || "156"} onValueChange={(value) => setSelectedCountryId(Number(value))} disabled={loadingCountries}>
+                <SelectTrigger id="nettvCountry"><SelectValue placeholder={loadingCountries ? "Loading countries..." : "Select country"} /></SelectTrigger>
+                <SelectContent>{countries.map(country => <SelectItem key={country.id} value={String(country.id)}>{country.name}</SelectItem>)}</SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label htmlFor="nettvProvince">Province *</Label>
-              <SearchableSelect
-                options={provinces.map(p => ({ value: p.id.toString(), label: p.name }))}
-                value={selectedProvinceId?.toString() || ""}
-                onValueChange={(value) => {
-                  const val = Array.isArray(value) ? value[0] : value;
-                  setSelectedProvinceId(parseInt(val || ""));
-                }}
-                placeholder="Select province"
-                disabled={!selectedCountryId}
-              />
+              <Select value={selectedProvinceId?.toString() || (selectedCountryId === 156 ? "3891" : "")} onValueChange={(value) => setSelectedProvinceId(Number(value))} disabled={!selectedCountryId || loadingCountries}>
+                <SelectTrigger id="nettvProvince"><SelectValue placeholder="Select province" /></SelectTrigger>
+                <SelectContent>{provinces.map(province => <SelectItem key={province.id} value={String(province.id)}>{province.name}</SelectItem>)}</SelectContent>
+              </Select>
             </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1295,6 +1288,7 @@ export function NetTVDialog({
               placeholder="https://example.com"
             />
           </div>
+          </>}
 
           {nettvSubscriberRegistered && <div className="space-y-4 rounded-lg border p-4">
             <div>
@@ -1330,7 +1324,7 @@ export function NetTVDialog({
           </div>}
 
           {/* Document Upload Section */}
-          <div className="space-y-3 rounded-lg border p-4">
+          {!nettvSubscriberRegistered && <div className="space-y-3 rounded-lg border p-4">
             <div className="flex items-center justify-between">
               <div>
                 <Label className="text-base font-semibold">Documents</Label>
@@ -1384,11 +1378,11 @@ export function NetTVDialog({
                 No documents uploaded. Click "Add Document" to upload an image.
               </div>
             )}
-          </div>
+          </div>}
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button type="button" onClick={handleConfirm}>Confirm</Button>
+          <Button type="button" onClick={handleConfirm}>{nettvSubscriberRegistered ? "Assign STB & Package" : "Create Subscriber"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -1827,12 +1821,10 @@ export function AddCustomerForm() {
 
       let lat = ""
       let lon = ""
-      if (lead.metadata?.latitude) {
-        lat = String(lead.metadata.latitude)
-      }
-      if (lead.metadata?.longitude) {
-        lon = String(lead.metadata.longitude)
-      }
+      const leadLatitude = lead.metadata?.latitude ?? lead.latitude ?? lead.lat ?? lead.location?.latitude
+      const leadLongitude = lead.metadata?.longitude ?? lead.longitude ?? lead.lon ?? lead.lng ?? lead.location?.longitude
+      if (leadLatitude !== undefined && leadLatitude !== null) lat = String(leadLatitude)
+      if (leadLongitude !== undefined && leadLongitude !== null) lon = String(leadLongitude)
 
       setFormValues({
         firstName: lead.firstName || "",
@@ -2819,6 +2811,11 @@ export function AddCustomerForm() {
           onboardStatus: "fully_onboarded",
         }))
         setIsSuccess(true) // Show success view with ACS tabs
+        const nettvResult = response.services?.find((service: any) => String(service.service || service.code || "").toUpperCase() === "NETTV")
+        if (nettvResult?.success && selectedAddonServices.has("NETTV") && !nettvData?.provisioning?.stb?.serial) {
+          toast.success("NETTV subscriber created. Select the customer's STB and package to finish provisioning.")
+          setNettvDialogOpen(true)
+        }
       } else {
         toast.error(response.message || "Provisioning failed")
       }
@@ -3171,7 +3168,7 @@ export function AddCustomerForm() {
           defaultProvince={formValues.state}
           defaultZip={formValues.zipCode}
           defaultPhone={formValues.phoneNumber}
-          defaultMobile={formValues.secondaryPhone || formValues.phoneNumber}
+          defaultMobile={formValues.secondaryPhone && !/^no secondary$/i.test(formValues.secondaryPhone.trim()) ? formValues.secondaryPhone : formValues.phoneNumber}
           defaultLat={coordinates.lat}
           defaultLng={coordinates.lon}
         />
