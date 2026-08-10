@@ -6,28 +6,35 @@ services:
       args:
         NEXT_PUBLIC_API_BASE_URL: "/api"
         INTERNAL_API_BASE_URL: "http://host.docker.internal:3200"
-        NEXT_PUBLIC_GOOGLE_CLIENT_ID: "497249566156-jed3q4fsm8ndrip7sdopqtk9gp5rh0eh.apps.googleusercontent.com"
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: "${NEXT_PUBLIC_GOOGLE_CLIENT_ID}"
 
-    container_name: kisan-isp-frontend
-    restart: always
+    container_name: kashtrix-frontend
+    restart: unless-stopped
 
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
+
+    env_file:
+      - /etc/kashtrix/secrets/frontend.env
 
     environment:
       NODE_ENV: production
       NEXT_PUBLIC_API_BASE_URL: "/api"
       INTERNAL_API_BASE_URL: "http://host.docker.internal:3200"
 
-      # ✅ SERVER ONLY (safe)
-      ACCESS_SECRET: "IspMainAdminPanel123@!23"
-      REFRESH_SECRET: "ispMainAdminPanelRefresh123"
-
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - "host.docker.internal:172.20.0.1"
+
+    networks:
+      - app-network
 
     logging:
       driver: "json-file"
       options:
         max-size: "50m"
         max-file: "5"
+
+networks:
+  app-network:
+    external: true
+    name: kashtrix_backend_net
