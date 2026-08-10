@@ -36,6 +36,17 @@ export function applyThemeTokens(tokens: ThemeTokens | ThemeModeTokens, mode: "l
   setColor("sidebar-accent",values.secondary||values.muted)
   setColor("sidebar-accent-foreground",values.secondaryForeground||values.foreground)
   setColor("sidebar-ring",values.ring||values.primary)
+  setColor("border-strong",values.ring||values.border)
+  setColor("chart-1",values.primary)
+  setColor("chart-2",values.accent)
+  setColor("chart-3",values.secondaryForeground||values.primary)
+  setColor("chart-4",values.destructive)
+  setColor("chart-5",values.mutedForeground)
+  if(values.primary)root.style.setProperty("--kashtrix-deep-plum",values.primary)
+  if(values.primary)root.style.setProperty("--kashtrix-intelligent-purple",values.primary)
+  if(values.mutedForeground)root.style.setProperty("--kashtrix-purple-muted",values.mutedForeground)
+  if(values.accent)root.style.setProperty("--kashtrix-ai-magenta",values.accent)
+  if(values.border)root.style.setProperty("--kashtrix-mist-lavender",values.border)
   if(values.background)root.style.setProperty("--theme-bg",values.background)
   if(values.foreground)root.style.setProperty("--theme-text",values.foreground)
   if(values.card)root.style.setProperty("--theme-card",values.card)
@@ -44,7 +55,7 @@ export function applyThemeTokens(tokens: ThemeTokens | ThemeModeTokens, mode: "l
   if(values.muted)root.style.setProperty("--theme-muted",values.muted)
   if(values.mutedForeground)root.style.setProperty("--theme-muted-foreground",values.mutedForeground)
   if(values.radius)root.style.setProperty("--radius",values.radius)
-  if(values.fontSans)root.style.setProperty("--font-sans",values.fontSans)
+  if(values.fontSans){root.style.setProperty("--font-sans",values.fontSans);root.style.setProperty("--font-body",values.fontSans)}
   if(values.fontHeading)root.style.setProperty("--font-heading",values.fontHeading)
   document.body.style.backgroundColor=values.background||""
   document.body.style.color=values.foreground||""

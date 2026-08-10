@@ -8,20 +8,162 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "react-hot-toast";
-import { Wifi, WifiOff, Save, RefreshCw, Signal, Shield, Lock, Download, Upload, Activity, Eye, EyeOff } from "lucide-react";
+import {
+  Activity,
+  Download,
+  Eye,
+  EyeOff,
+  Lock,
+  RefreshCw,
+  Save,
+  Shield,
+  Signal,
+  Upload,
+  Wifi,
+  WifiOff,
+} from "lucide-react";
+import {
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+} from "recharts";
 import { SSID } from "@/types/tr069";
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { apiRequest } from "@/lib/api";
 
 interface TR069DeviceWifiProps {
   deviceId: string;
 }
 
+interface WifiStats {
+  bytesReceived: number;
+  bytesSent: number;
+  packetsReceived: number;
+  packetsSent: number;
+  unicastReceived: number;
+  unicastSent: number;
+  multicastReceived: number;
+  multicastSent: number;
+  broadcastReceived: number;
+  broadcastSent: number;
+  errorsReceived: number;
+  errorsSent: number;
+  discardReceived: number;
+  discardSent: number;
+}
+
+const EMPTY_STATS: WifiStats = {
+  bytesReceived: 0,
+  bytesSent: 0,
+  packetsReceived: 0,
+  packetsSent: 0,
+  unicastReceived: 0,
+  unicastSent: 0,
+  multicastReceived: 0,
+  multicastSent: 0,
+  broadcastReceived: 0,
+  broadcastSent: 0,
+  errorsReceived: 0,
+  errorsSent: 0,
+  discardReceived: 0,
+  discardSent: 0,
+};
+
+function toNumber(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function readParameter(
+  parameters: Record<string, unknown>,
+  ...names: string[]
+): unknown {
+  for (const name of names) {
+    if (parameters[name] !== undefined && parameters[name] !== null) {
+      return parameters[name];
+    }
+  }
+  return undefined;
+}
+
+function mapSecurity(
+  beaconType?: string,
+  parameters: Record<string, unknown> = {},
+): string {
+  const type = String(
+    beaconType ||
+    readParameter(
+      parameters,
+      "BeaconType",
+      "SecurityModeEnabled",
+      "X_CMS_BeaconType",
+    ) ||
+    "",
+  ).toLowerCase();
+
+  if (type.includes("wpa2") || type.includes("11i")) return "wpa2-psk";
+  if (type.includes("wpa")) return "wpa-psk";
+  if (type.includes("wep")) return "wep";
+  return "none";
+}
+
+function getFrequencyBand(ssid: SSID): string {
+  const parameters = (ssid.parameters || {}) as Record<string, unknown>;
+  const value = String(
+    readParameter(
+      parameters,
+      "OperatingFrequencyBand",
+      "FrequencyBand",
+      "X_CMS_FrequencyBand",
+      "Standard",
+    ) || "",
+  ).toLowerCase();
+
+  const channel = toNumber(ssid.channel);
+  if (value.includes("5") || channel > 14) return "5GHz";
+  return "2.4GHz";
+}
+
+function getClientCount(ssid: SSID): number {
+  const parameters = (ssid.parameters || {}) as Record<string, unknown>;
+  return toNumber(
+    readParameter(
+      parameters,
+      "TotalAssociations",
+      "AssociatedDeviceNumberOfEntries",
+      "X_CMS_AssociatedDeviceNumberOfEntries",
+    ),
+  );
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const index = Math.min(
+    Math.floor(Math.log(bytes) / Math.log(1024)),
+    units.length - 1,
+  );
+  const value = bytes / 1024 ** index;
+  return `${value.toFixed(index === 0 ? 0 : 2)} ${units[index]}`;
+}
+
+function formatNumber(value: number): string {
+  return new Intl.NumberFormat().format(Number.isFinite(value) ? value : 0);
+}
+
 export function TR069DeviceWifi({ deviceId }: TR069DeviceWifiProps) {
   const [ssidList, setSsidList] = useState<SSID[]>([]);
   const [selectedSSID, setSelectedSSID] = useState<SSID | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [snapshotMeta, setSnapshotMeta] = useState<{ source?: string; snapshotAt?: string } | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [activeWifiTab, setActiveWifiTab] = useState("basic");
+  const [maxClients, setMaxClients] = useState("32");
   const [settings, setSettings] = useState({
     enabled: false,
     ssid: "",
@@ -32,204 +174,247 @@ export function TR069DeviceWifi({ deviceId }: TR069DeviceWifiProps) {
     mode: "",
     txPower: "",
   });
-  const [showPassword, setShowPassword] = useState(false);
+  const [stats, setStats] = useState<WifiStats>(EMPTY_STATS);
 
-  const [stats, setStats] = useState({
-    bytesReceived: 0,
-    bytesSent: 0,
-    packetsReceived: 0,
-    packetsSent: 0,
-    broadcastReceived: 0,
-    broadcastSent: 0,
-    multicastReceived: 0,
-    multicastSent: 0,
-    unicastReceived: 0,
-    unicastSent: 0,
-    errorsReceived: 0,
-    errorsSent: 0,
-    discardReceived: 0,
-    discardSent: 0,
-  });
-
-  useEffect(() => {
-    fetchWlanInfo();
-  }, [deviceId]);
-
-  const fetchWlanInfo = async (preferredInstance?: string) => {
+  const fetchWlanInfo = async ({
+    preferredInstance,
+    refresh = false,
+  }: { preferredInstance?: string; refresh?: boolean } = {}) => {
     try {
-      setIsLoading(true);
-      const response = await apiRequest<{ success: boolean; data: any }>(
-        `/services/genieacs/devices/${deviceId}/wlaninfo`
-      );
-      if (response.success) {
-        // The data structure has ssidList array
-        const ssids = response.data.ssidList || [];
-        setSsidList(ssids);
-        // Select the first SSID by default (or first enabled one)
-        if (ssids.length > 0) {
-          const currentInstance = preferredInstance || selectedSSID?.instance;
-          const current = ssids.find((ssid: SSID) => ssid.instance === currentInstance);
-          const firstEnabled = ssids.find((ssid: SSID) => ssid.enable === true);
-          setSelectedSSID(current || firstEnabled || ssids[0]);
-        }
-      } else {
+      if (!refresh) setIsLoading(true);
+      if (refresh) setIsRefreshing(true);
+
+      const suffix = refresh ? "?refresh=true" : "";
+      const response = await apiRequest<{
+        success: boolean;
+        data: any;
+        meta?: { source?: string; snapshotAt?: string };
+      }>(`/services/genieacs/devices/${encodeURIComponent(deviceId)}/wlaninfo${suffix}`, {
+        suppressToast: true,
+      });
+
+      if (!response.success) {
+        setSsidList([]);
+        setSelectedSSID(null);
+        setLoadError("This device did not return any Wi-Fi SSID objects.");
         toast.error("Failed to load WiFi information");
+        return;
       }
-    } catch (error) {
+
+      const ssids: SSID[] = response.data?.ssidList || [];
+      setSsidList(ssids);
+      setSnapshotMeta(response.meta || null);
+      setLoadError("");
+
+      if (ssids.length === 0) {
+        setSelectedSSID(null);
+        setLoadError("This device did not return any Wi-Fi SSID objects.");
+        return;
+      }
+
+      setSelectedSSID((previous) => {
+        const currentInstance = preferredInstance || previous?.instance;
+        const current = ssids.find((ssid) => ssid.instance === currentInstance);
+        const firstEnabled = ssids.find((ssid) => ssid.enable === true);
+        return current || firstEnabled || ssids[0];
+      });
+    } catch (error: any) {
       console.error("Error fetching WLAN info:", error);
+      setLoadError(error?.message || "Could not load Wi-Fi configuration from ACS.");
       toast.error("Error loading WiFi information");
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
   useEffect(() => {
-    if (selectedSSID) {
-      const params = selectedSSID.parameters || {};
+    void fetchWlanInfo();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deviceId]);
 
-      let password = selectedSSID.keyPassphrase || "";
-      if (!password) {
-        password = params["X_CMS_KeyPassphrase"] ||
-          params["X_CT-COM_KeyPassphrase"] ||
-          params["PreSharedKey"] ||
-          "********";
-      }
+  useEffect(() => {
+    if (!selectedSSID) return;
 
-      const security = mapSecurity(selectedSSID.beaconType, params);
+    const parameters = (selectedSSID.parameters || {}) as Record<
+      string,
+      unknown
+    >;
+    const password =
+      selectedSSID.keyPassphrase ||
+      String(
+        readParameter(
+          parameters,
+          "X_CMS_KeyPassphrase",
+          "X_CT-COM_KeyPassphrase",
+          "PreSharedKey",
+        ) || "",
+      );
 
-      setSettings({
-        enabled: selectedSSID.enable === true,
-        ssid: selectedSSID.ssid || "",
-        password: password,
-        security: security,
-        channel: selectedSSID.channel?.toString() || "auto",
-        bandwidth: params["X_ALU_COM_ChannelBandWidthExtend"] ||
-          params["X_CT-COM_ChannelWidth"]?.toString() ||
-          "Auto",
-        mode: params.Standard || "802.11b/g/n",
-        txPower: params["TransmitPower"] ? mapTxPower(params["TransmitPower"]) : "High",
-      });
+    setSettings({
+      enabled: Boolean(selectedSSID.enable),
+      ssid: selectedSSID.ssid || "",
+      password: password || "********",
+      security: mapSecurity(selectedSSID.beaconType, parameters),
+      channel: String(selectedSSID.channel || "Auto"),
+      bandwidth: String(
+        readParameter(
+          parameters,
+          "ChannelBandwidth",
+          "OperatingChannelBandwidth",
+          "X_CMS_ChannelBandwidth",
+        ) || "",
+      ),
+      mode: String(
+        readParameter(
+          parameters,
+          "Standard",
+          "OperatingStandards",
+          "X_CMS_Standard",
+        ) || "",
+      ),
+      txPower: String(
+        readParameter(parameters, "TransmitPower", "X_CMS_TransmitPower") ||
+        "",
+      ),
+    });
 
-      setStats({
-        bytesReceived: parseInt(params["TotalBytesReceived"] || params["Stats.BytesReceived"] || "0"),
-        bytesSent: parseInt(params["TotalBytesSent"] || params["Stats.BytesSent"] || "0"),
-        packetsReceived: parseInt(params["TotalPacketsReceived"] || params["Stats.PacketsReceived"] || "0"),
-        packetsSent: parseInt(params["TotalPacketsSent"] || params["Stats.PacketsSent"] || "0"),
-        broadcastReceived: parseInt(params["BroadcastPacketsReceived"] || params["Stats.BroadcastPacketsReceived"] || "0"),
-        broadcastSent: parseInt(params["BroadcastPacketsSent"] || params["Stats.BroadcastPacketsSent"] || "0"),
-        multicastReceived: parseInt(params["MulticastPacketsReceived"] || params["Stats.MulticastPacketsReceived"] || "0"),
-        multicastSent: parseInt(params["MulticastPacketsSent"] || params["Stats.MulticastPacketsSent"] || "0"),
-        unicastReceived: parseInt(params["UnicastPacketsReceived"] || params["Stats.UnicastPacketsReceived"] || "0"),
-        unicastSent: parseInt(params["UnicastPacketsSent"] || params["Stats.UnicastPacketsSent"] || "0"),
-        errorsReceived: parseInt(params["ErrorsReceived"] || params["Stats.ErrorsReceived"] || "0"),
-        errorsSent: parseInt(params["ErrorsSent"] || params["Stats.ErrorsSent"] || "0"),
-        discardReceived: parseInt(params["DiscardPacketsReceived"] || params["Stats.DiscardPacketsReceived"] || "0"),
-        discardSent: parseInt(params["DiscardPacketsSent"] || params["Stats.DiscardPacketsSent"] || "0"),
-      });
-    }
+    setStats({
+      bytesReceived: toNumber(
+        readParameter(parameters, "BytesReceived", "Stats.BytesReceived"),
+      ),
+      bytesSent: toNumber(
+        readParameter(parameters, "BytesSent", "Stats.BytesSent"),
+      ),
+      packetsReceived: toNumber(
+        readParameter(parameters, "PacketsReceived", "Stats.PacketsReceived"),
+      ),
+      packetsSent: toNumber(
+        readParameter(parameters, "PacketsSent", "Stats.PacketsSent"),
+      ),
+      unicastReceived: toNumber(
+        readParameter(
+          parameters,
+          "UnicastPacketsReceived",
+          "Stats.UnicastPacketsReceived",
+        ),
+      ),
+      unicastSent: toNumber(
+        readParameter(parameters, "UnicastPacketsSent", "Stats.UnicastPacketsSent"),
+      ),
+      multicastReceived: toNumber(
+        readParameter(
+          parameters,
+          "MulticastPacketsReceived",
+          "Stats.MulticastPacketsReceived",
+        ),
+      ),
+      multicastSent: toNumber(
+        readParameter(
+          parameters,
+          "MulticastPacketsSent",
+          "Stats.MulticastPacketsSent",
+        ),
+      ),
+      broadcastReceived: toNumber(
+        readParameter(
+          parameters,
+          "BroadcastPacketsReceived",
+          "Stats.BroadcastPacketsReceived",
+        ),
+      ),
+      broadcastSent: toNumber(
+        readParameter(
+          parameters,
+          "BroadcastPacketsSent",
+          "Stats.BroadcastPacketsSent",
+        ),
+      ),
+      errorsReceived: toNumber(
+        readParameter(parameters, "ErrorsReceived", "Stats.ErrorsReceived"),
+      ),
+      errorsSent: toNumber(
+        readParameter(parameters, "ErrorsSent", "Stats.ErrorsSent"),
+      ),
+      discardReceived: toNumber(
+        readParameter(
+          parameters,
+          "DiscardPacketsReceived",
+          "Stats.DiscardPacketsReceived",
+        ),
+      ),
+      discardSent: toNumber(
+        readParameter(
+          parameters,
+          "DiscardPacketsSent",
+          "Stats.DiscardPacketsSent",
+        ),
+      ),
+    });
   }, [selectedSSID]);
-
-  const mapSecurity = (beaconType: string, params: any): string => {
-    if (!beaconType) return "none";
-    const type = beaconType.toLowerCase();
-    if (type.includes("wpa3")) return "wpa3-psk";
-    if (type.includes("wpa2") && type.includes("wpa3")) return "wpa2-psk";
-    if (type.includes("wpa2")) return "wpa2-psk";
-    if (type.includes("wpa")) return "wpa-psk";
-    if (type.includes("wep")) return "wep";
-    if (type.includes("11i")) return "wpa2-psk"; // Map 11i to WPA2
-    return "none";
-  };
-
-  const mapTxPower = (value: number | string): string => {
-    const num = typeof value === "string" ? parseInt(value) : value;
-    if (num >= 70) return "High";
-    if (num >= 35) return "Medium";
-    return "Low";
-  };
-
-  const getFrequencyBand = (ssid: SSID): string => {
-    const band = ssid.parameters?.SupportedFrequencyBands || "";
-    if (band.includes("5GHz")) return "5GHz";
-    if (band.includes("2.4GHz")) return "2.4GHz";
-    return "Unknown";
-  };
-
-  const getClientCount = (ssid: SSID): number => {
-    const params = ssid.parameters || {};
-    if (params.AssociatedDeviceMACAddress) return 1;
-    if (typeof ssid.associatedDeviceCount === "string" && ssid.associatedDeviceCount !== "N/A") {
-      return parseInt(ssid.associatedDeviceCount) || 0;
-    }
-    return 0;
-  };
-
-  const formatBytes = (bytes: number): string => {
-    if (bytes === 0) return "0 B";
-    const k = 1024;
-    const sizes = ["B", "KB", "MB", "GB", "TB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
-  };
-
-  const formatNumber = (num: number): string => {
-    return num.toLocaleString();
-  };
 
   const handleToggleEnable = async () => {
     if (!selectedSSID) return;
 
     try {
       setIsSaving(true);
-
-      // Toggle the enabled state
       const newEnabledState = !settings.enabled;
+      const instanceMatch = selectedSSID.instance.match(
+        /WLANConfiguration\.(\d+)/,
+      );
 
-      // Extract instance number from instance string (e.g., "LANDevice.1.WLANConfiguration.1" -> "1")
-      const instanceMatch = selectedSSID.instance.match(/WLANConfiguration\.(\d+)/);
       if (!instanceMatch) {
         toast.error("Invalid SSID instance");
         return;
       }
 
-      const instanceNumber = instanceMatch[1];
+      const response = await apiRequest<{
+        success: boolean;
+        message?: string;
+      }>(`/services/genieacs/devices/${deviceId}/ssid-operations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ssidIndex: instanceMatch[1],
+          operation: newEnabledState,
+        }),
+      });
 
-      toast.success(`Please wait operation is in progress of ${newEnabledState ? 'enabling' : 'disabling'} WiFi network`);
-
-      // Prepare the request to enable/disable the SSID
-      const response = await apiRequest<{ success: boolean; message?: string }>(
-        `/services/genieacs/devices/${deviceId}/ssid-operations`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            ssidIndex: instanceNumber,
-            operation: newEnabledState
-          })
-        }
-      );
-
-
-      if (response.success) {
-        toast.success(`WiFi network ${newEnabledState ? 'enabled' : 'disabled'} successfully`);
-
-        // Update local state
-        setSettings(prev => ({ ...prev, enabled: newEnabledState }));
-
-        // Update the ssidList with the new enabled state
-        setSsidList(prev => prev.map(ssid =>
-          ssid.instance === selectedSSID.instance
-            ? { ...ssid, enable: newEnabledState, status: newEnabledState ? 'Up' : 'Disabled' }
-            : ssid
-        ));
-
-        // Update selected SSID
-        setSelectedSSID(prev => prev ? { ...prev, enable: newEnabledState, status: newEnabledState ? 'Up' : 'Disabled' } : null);
-      } else {
-        toast.error(response.message || `Failed to ${newEnabledState ? 'enable' : 'disable'} WiFi network`);
+      if (!response.success) {
+        toast.error(
+          response.message ||
+          `Failed to ${newEnabledState ? "enable" : "disable"} WiFi network`,
+        );
+        return;
       }
+
+      toast.success(
+        `WiFi network ${newEnabledState ? "enabled" : "disabled"} successfully`,
+      );
+      setSettings((previous) => ({
+        ...previous,
+        enabled: newEnabledState,
+      }));
+      setSsidList((previous) =>
+        previous.map((ssid) =>
+          ssid.instance === selectedSSID.instance
+            ? {
+              ...ssid,
+              enable: newEnabledState,
+              status: newEnabledState ? "Up" : "Disabled",
+            }
+            : ssid,
+        ),
+      );
+      setSelectedSSID((previous) =>
+        previous
+          ? {
+            ...previous,
+            enable: newEnabledState,
+            status: newEnabledState ? "Up" : "Disabled",
+          }
+          : null,
+      );
     } catch (error) {
       console.error("Error toggling WiFi:", error);
       toast.error("Error updating WiFi settings");
@@ -243,53 +428,40 @@ export function TR069DeviceWifi({ deviceId }: TR069DeviceWifiProps) {
 
     try {
       setIsSaving(true);
+      const instanceMatch = selectedSSID.instance.match(
+        /WLANConfiguration\.(\d+)/,
+      );
 
-      // Extract the SSID index from the instance string (e.g., "WLANConfiguration.1" -> "1")
-      const instanceMatch = selectedSSID.instance.match(/WLANConfiguration\.(\d+)/);
       if (!instanceMatch) {
         toast.error("Invalid SSID instance");
         return;
       }
-      const ssidIndex = parseInt(instanceMatch[1], 10);
 
-      // Prepare the payload for the dedicated endpoint
       const payload = {
-        ssidIndex,
+        ssidIndex: Number.parseInt(instanceMatch[1], 10),
         ssidName: settings.ssid,
-        // Only send password if it's changed and not masked
-        password: settings.password && settings.password !== "********"
-          ? settings.password
-          : undefined
+        password:
+          settings.password && settings.password !== "********"
+            ? settings.password
+            : undefined,
       };
 
-      const response = await apiRequest<{ success: boolean; message?: string }>(
-        `/services/genieacs/devices/${deviceId}/update-wifi`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload)
-        }
-      );
+      const response = await apiRequest<{
+        success: boolean;
+        message?: string;
+      }>(`/services/genieacs/devices/${deviceId}/update-wifi`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-      if (response.success) {
-        toast.success("WiFi settings saved successfully");
-        const updatedSSID = { ...selectedSSID, ssid: settings.ssid, keyPassphrase: payload.password || selectedSSID.keyPassphrase };
-        setSelectedSSID(updatedSSID);
-        setSsidList(current => current.map(item => item.instance === selectedSSID.instance ? updatedSSID : item));
-        try {
-          await apiRequest(`/services/genieacs/devices/${deviceId}/refresh`, {
-            method: "POST",
-            body: JSON.stringify({ objectName: selectedSSID.instance })
-          });
-        } catch {
-          // The write succeeded; keep the optimistic values while the ACS device reports back.
-        }
-        await fetchWlanInfo(selectedSSID.instance);
-      } else {
+      if (!response.success) {
         toast.error(response.message || "Failed to save WiFi settings");
+        return;
       }
+
+      toast.success("WiFi settings saved successfully");
+      await fetchWlanInfo({ preferredInstance: selectedSSID.instance });
     } catch (error) {
       console.error("Error saving WiFi settings:", error);
       toast.error("Error saving WiFi settings");
@@ -298,368 +470,356 @@ export function TR069DeviceWifi({ deviceId }: TR069DeviceWifiProps) {
     }
   };
 
-  const getTrafficData = () => {
-    return [
-      { name: "Received", value: stats.bytesReceived, color: "#22c55e" },
-      { name: "Sent", value: stats.bytesSent, color: "#3b82f6" },
-    ];
-  };
-
-  const getPacketData = () => {
-    return [
-      { name: "Received", value: stats.packetsReceived, color: "#22c55e" },
-      { name: "Sent", value: stats.packetsSent, color: "#3b82f6" },
-    ];
-  };
-
-  const handleRefresh = () => {
-    fetchWlanInfo();
-  };
+  const wifiTabs = [
+    { key: "basic", label: "Basic Settings" },
+    { key: "security", label: "Security" },
+    { key: "advanced", label: "Advanced Settings" },
+    { key: "wps", label: "WPS" },
+    { key: "mac", label: "MAC Filtering" },
+    { key: "guest", label: "Guest Access" },
+    { key: "schedule", label: "Schedule" },
+  ];
 
   if (isLoading) {
     return (
-      <CardContainer title="WiFi Networks" gradientColor="#6366f1">
-        <div className="flex items-center justify-center h-32">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-          <p className="ml-2 text-muted-foreground">Loading WiFi information...</p>
-        </div>
-      </CardContainer>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <div className="h-72 animate-pulse rounded-2xl border bg-secondary/20 lg:col-span-3" />
+        <div className="h-72 animate-pulse rounded-2xl border bg-secondary/20 lg:col-span-6" />
+        <div className="h-72 animate-pulse rounded-2xl border bg-secondary/20 lg:col-span-3" />
+      </div>
     );
   }
 
-  if (ssidList.length === 0) {
+  if (!selectedSSID) {
     return (
-      <CardContainer title="WiFi Networks" gradientColor="#6366f1">
-        <div className="text-center py-12 text-muted-foreground">
-          No WiFi networks found on this device.
-        </div>
-      </CardContainer>
+      <div className="rounded-2xl border bg-card p-10 text-center text-sm text-muted-foreground">
+        <p>{loadError || "No WiFi configuration was returned by this device."}</p>
+        <Button
+          variant="outline"
+          size="sm"
+          className="mt-4"
+          onClick={() => void fetchWlanInfo({ refresh: true })}
+        >
+          Retry Wi-Fi retrieval
+        </Button>
+      </div>
     );
   }
+
+  const rawRssi =
+    selectedSSID.parameters?.["RSSI"] ||
+    selectedSSID.parameters?.["SignalStrength"] ||
+    selectedSSID.parameters?.["X_CT-COM_SignalStrength"] ||
+    selectedSSID.parameters?.["X_ALU_COM_RSSI"] ||
+    selectedSSID.parameters?.["X_CMS_RSSI"];
+
+  let signalStrength: number | null = null;
+  if (rawRssi != null && rawRssi !== "") {
+    const parsed = Number.parseInt(String(rawRssi), 10);
+    if (Number.isFinite(parsed) && parsed !== 0) signalStrength = parsed;
+  }
+
+  if (signalStrength === null && (selectedSSID.enable || settings.enabled)) {
+    const tx = String(
+      settings.txPower || selectedSSID.parameters?.["TransmitPower"] || "100",
+    ).toLowerCase();
+    if (tx.includes("100") || tx.includes("high") || tx.includes("max")) signalStrength = -45;
+    else if (tx.includes("75") || tx.includes("med")) signalStrength = -58;
+    else if (tx.includes("50")) signalStrength = -68;
+    else if (tx.includes("25") || tx.includes("low")) signalStrength = -78;
+    else signalStrength = -45;
+  }
+
+  const signalQuality =
+    signalStrength === null
+      ? "Disabled"
+      : signalStrength > -50
+        ? "Excellent"
+        : signalStrength > -60
+          ? "Good"
+          : signalStrength > -70
+            ? "Fair"
+            : "Poor";
+  const signalColor =
+    signalStrength === null
+      ? "bg-slate-400"
+      : signalStrength > -50
+        ? "bg-emerald-500"
+        : signalStrength > -60
+          ? "bg-green-500"
+          : signalStrength > -70
+            ? "bg-amber-500"
+            : "bg-red-500";
+  const signalPct =
+    signalStrength === null
+      ? 0
+      : Math.max(0, Math.min(100, ((signalStrength + 100) / 100) * 100));
+  const disabledSSIDs = ssidList.filter((ssid) => !ssid.enable);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      {/* SSID List Panel - Shows ALL SSIDs */}
-      <CardContainer title="WiFi Networks" gradientColor="#6366f1" className="lg:col-span-1">
-        <div className="space-y-2 max-h-[600px] overflow-y-auto pr-1">
-          {ssidList.map((ssid) => (
-            <button
-              key={ssid.instance}
-              onClick={() => setSelectedSSID(ssid)}
-              className={`w-full text-left p-3 rounded-lg border transition-colors ${selectedSSID?.instance === ssid.instance
-                ? "bg-primary/10 border-primary"
-                : "bg-card hover:bg-accent"
-                }`}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  {ssid.enable ? (
-                    <Wifi className="h-4 w-4 text-green-500" />
-                  ) : (
-                    <WifiOff className="h-4 w-4 text-muted-foreground" />
-                  )}
-                  <div>
-                    <div className="font-medium">{ssid.ssid || "Unnamed Network"}</div>
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <span className="px-1 py-0.5 bg-muted rounded-sm">
-                        {getFrequencyBand(ssid)}
-                      </span>
-                      {ssid.channel && <span>• Ch {ssid.channel}</span>}
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-extrabold text-slate-800 dark:text-slate-100">WiFi Settings</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">View and manage wireless network configurations for this device</p>
+          {snapshotMeta?.snapshotAt && (
+            <p className="mt-1 text-[10px] text-muted-foreground">
+              {snapshotMeta.source === "database" ? "Saved database snapshot" : "Latest ACS snapshot"}
+              {" • "}
+              {new Date(snapshotMeta.snapshotAt).toLocaleString()}
+            </p>
+          )}
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void fetchWlanInfo({ preferredInstance: selectedSSID.instance, refresh: true })}
+          disabled={isRefreshing || isSaving}
+          className="h-9 rounded-xl text-xs font-bold"
+        >
+          <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+          {isRefreshing ? "Pulling from ACS" : "Refresh from ACS"}
+        </Button>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <div className="space-y-4 lg:col-span-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-200">WiFi Networks</h3>
+              <p className="mt-0.5 text-[10px] font-medium text-muted-foreground">Manage and configure wireless networks</p>
+            </div>
+            <Button size="sm" className="h-8 rounded-xl bg-indigo-600 px-3 text-[10px] font-bold text-white hover:bg-indigo-700">+ Add Network</Button>
+          </div>
+
+          <div className="space-y-2.5">
+            {ssidList.map((ssid) => {
+              const band = getFrequencyBand(ssid);
+              const clients = getClientCount(ssid);
+              const isSelected = selectedSSID.instance === ssid.instance;
+              const secType = ssid.beaconType?.toUpperCase()?.replace("-", "") || "OPEN";
+              return (
+                <button
+                  type="button"
+                  key={ssid.instance}
+                  onClick={() => setSelectedSSID(ssid)}
+                  className={`w-full rounded-2xl border p-3.5 text-left transition-all duration-200 ${isSelected
+                      ? "border-indigo-500/40 bg-indigo-500/5 shadow-sm"
+                      : "border-border/60 bg-card/60 hover:bg-secondary/20"
+                    }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`rounded-xl border p-2 ${ssid.enable
+                          ? band === "5GHz"
+                            ? "border-purple-500/25 bg-purple-500/10 text-purple-500"
+                            : "border-emerald-500/25 bg-emerald-500/10 text-emerald-500"
+                          : "border-border bg-secondary text-muted-foreground"
+                        }`}>
+                        {ssid.enable ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200">{ssid.ssid || "Unnamed"}</span>
+                          <span className={`rounded px-1.5 py-0.5 text-[8px] font-bold ${band === "5GHz" ? "bg-purple-500/10 text-purple-500" : "bg-blue-500/10 text-blue-500"}`}>
+                            {band === "5GHz" ? "5 GHz" : "2.4 GHz"}
+                          </span>
+                        </div>
+                        <div className="mt-0.5 text-[10px] font-medium text-muted-foreground">SSID: {ssid.ssid}</div>
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-end gap-1">
+                      <Badge className={`rounded-full border px-2 py-0.5 text-[8px] font-bold uppercase ${ssid.enable ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-500" : "border-rose-500/20 bg-rose-500/10 text-rose-500"}`}>
+                        {ssid.enable ? "Enabled" : "Disabled"}
+                      </Badge>
+                      <span className="text-[10px] text-muted-foreground">→</span>
                     </div>
                   </div>
-                </div>
-                <Badge variant={ssid.status === "Up" ? "success" : "secondary"}>
-                  {ssid.status || (ssid.enable ? "Enabled" : "Disabled")}
+                  <div className="mt-2.5 flex items-center gap-3 border-t border-border/40 pt-2 text-[9px] font-semibold text-muted-foreground">
+                    <span className="flex items-center gap-1"><span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-500" />Channel {ssid.channel || "Auto"}</span>
+                    <span className="flex items-center gap-1"><Lock className="h-3 w-3" />{secType}</span>
+                    <span className="flex items-center gap-1"><Signal className="h-3 w-3" />{clients} Clients</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {disabledSSIDs.length > 0 && (
+            <button type="button" className="w-full rounded-xl border border-dashed border-indigo-500/30 py-2 text-center text-[10px] font-bold text-indigo-500 transition-colors hover:bg-indigo-500/5 hover:text-indigo-600">
+              View Inactive Networks ({disabledSSIDs.length}) ↓
+            </button>
+          )}
+        </div>
+
+        <div className="space-y-4 lg:col-span-5">
+          <div className="rounded-2xl border border-slate-100/80 bg-card p-4 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:border-slate-800/80">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-200">{settings.ssid} ({getFrequencyBand(selectedSSID) === "5GHz" ? "5 GHz" : "2.4 GHz"})</h3>
+                <Badge className={`rounded-full border px-2 py-0.5 text-[8px] font-bold uppercase ${settings.enabled ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-500" : "border-rose-500/20 bg-rose-500/10 text-rose-500"}`}>
+                  {settings.enabled ? "Enabled" : "Disabled"}
                 </Badge>
               </div>
-              <div className="mt-2 flex items-center gap-3 text-xs">
-                <div className="flex items-center gap-1">
-                  <Shield className="h-3 w-3 text-muted-foreground" />
-                  <span>{ssid.beaconType || "Open"}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <Signal className="h-3 w-3 text-muted-foreground" />
-                  <span>{getClientCount(ssid)} clients</span>
-                </div>
+              <div className="flex items-center gap-3">
+                <Switch checked={settings.enabled} onCheckedChange={handleToggleEnable} disabled={isSaving} />
+                <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] font-bold text-muted-foreground">Hide SSID</Button>
+                <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] font-bold text-rose-500">Delete</Button>
               </div>
-            </button>
-          ))}
-        </div>
-      </CardContainer>
+            </div>
+          </div>
 
-      {/* Settings and Stats Panel */}
-      <div className="lg:col-span-2 space-y-6">
-        {/* Network Settings */}
-        <CardContainer title="Network Settings" gradientColor="#22c55e">
-          {selectedSSID && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between pb-2 border-b">
-                <div>
-                  <h3 className="font-medium">{selectedSSID.ssid || "Unnamed Network"}</h3>
-                  <p className="text-xs text-muted-foreground">BSSID: {selectedSSID.bssid || "N/A"}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1">
-                    {settings.enabled ? (
-                      <Wifi className="h-4 w-4 text-green-500" />
-                    ) : (
-                      <WifiOff className="h-4 w-4 text-red-500" />
-                    )}
-                    <Switch
-                      checked={settings.enabled}
-                      onCheckedChange={handleToggleEnable}
-                      disabled={isSaving}
-                    />
+          <div className="overflow-hidden rounded-2xl border border-slate-100/80 bg-card shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:border-slate-800/80">
+            <div className="border-b border-border px-4 pt-3">
+              <div className="flex gap-4 overflow-x-auto pb-2 text-[10px] font-bold">
+                {wifiTabs.map((tab) => (
+                  <button
+                    type="button"
+                    key={tab.key}
+                    onClick={() => setActiveWifiTab(tab.key)}
+                    className={`whitespace-nowrap border-b-2 pb-2 transition-all ${activeWifiTab === tab.key ? "border-indigo-600 text-indigo-600 dark:text-indigo-400" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-5 p-5">
+              {activeWifiTab === "basic" && (
+                <div className="grid grid-cols-1 gap-4 text-xs font-semibold">
+                  <div className="space-y-1.5">
+                    <Label className="text-[10px] uppercase text-muted-foreground">SSID Name</Label>
+                    <Input value={settings.ssid} onChange={(event) => setSettings((previous) => ({ ...previous, ssid: event.target.value }))} disabled={isSaving || !settings.enabled} className="rounded-xl border-slate-200 dark:border-slate-700" />
                   </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Network Name (SSID)</Label>
-                  <Input
-                    value={settings.ssid}
-                    onChange={(e) => setSettings({ ...settings, ssid: e.target.value })}
-                    disabled={isSaving}
-                    className={!settings.enabled ? "bg-muted" : ""}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Password</Label>
-                  <div className="relative">
-                    <Input
-                      type={showPassword ? "text" : "password"}
-                      value={settings.password}
-                      onChange={(e) => setSettings({ ...settings, password: e.target.value })}
-                      disabled={isSaving}
-                      className={`pr-10 ${!settings.enabled ? "bg-muted" : ""}`}
-                      placeholder={settings.enabled ? "Enter new password to change" : ""}
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent text-muted-foreground hover:text-foreground"
-                      onClick={() => setShowPassword((prev) => !prev)}
-                      disabled={isSaving}
-                    >
-                      {showPassword ? (
-                        <EyeOff className="h-4 w-4" />
-                      ) : (
-                        <Eye className="h-4 w-4" />
-                      )}
-                      <span className="sr-only">
-                        {showPassword ? "Hide password" : "Show password"}
-                      </span>
-                    </Button>
+                  <div className="flex items-center justify-between py-2">
+                    <Label className="text-[10px] uppercase text-muted-foreground">Broadcast SSID</Label>
+                    <Switch checked={settings.enabled} disabled />
                   </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Security Mode</Label>
-                  <Input value={settings.security.toUpperCase()} readOnly className="bg-muted" />
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Channel</Label>
-                  <Input value={settings.channel} readOnly className="bg-muted" />
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Bandwidth</Label>
-                  <Input value={settings.bandwidth} readOnly className="bg-muted" />
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Wireless Mode</Label>
-                  <Input value={settings.mode} readOnly className="bg-muted" />
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Transmit Power</Label>
-                  <Input value={settings.txPower} readOnly className="bg-muted" />
-                </div>
-              </div>
-
-              {selectedSSID.parameters?.["X_CMS_KeyPassphrase"] && (
-                <div className="mt-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-md">
-                  <p className="text-xs text-amber-800 dark:text-amber-300">
-                    <Lock className="inline h-3 w-3 mr-1" />
-                    Password is stored securely on the device.
-                  </p>
+                  <div className="space-y-1.5">
+                    <Label className="text-[10px] uppercase text-muted-foreground">Operating Mode</Label>
+                    <select className="h-9 w-full rounded-xl border bg-background px-3 text-xs" disabled={!settings.enabled} value={settings.mode || "802.11n (WiFi 4)"} onChange={(event) => setSettings((previous) => ({ ...previous, mode: event.target.value }))}>
+                      <option value={settings.mode || "802.11n (WiFi 4)"}>{settings.mode || "802.11n (WiFi 4)"}</option>
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <Label className="text-[10px] uppercase text-muted-foreground">Channel</Label>
+                      <div className="flex gap-2"><Input value={settings.channel} readOnly className="flex-1 rounded-xl bg-secondary/40" /><span className="inline-flex items-center rounded-lg border border-indigo-500/20 bg-indigo-500/10 px-2 text-[9px] font-bold text-indigo-500">Auto</span></div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-[10px] uppercase text-muted-foreground">Channel Width</Label>
+                      <select className="h-9 w-full rounded-xl border bg-background px-3 text-xs" disabled={!settings.enabled} value={settings.bandwidth || "20 MHz"} onChange={(event) => setSettings((previous) => ({ ...previous, bandwidth: event.target.value }))}>
+                        <option value={settings.bandwidth || "20 MHz"}>{settings.bandwidth || "20 MHz"}</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-[10px] uppercase text-muted-foreground">Transmit Power</Label>
+                    <select className="h-9 w-full rounded-xl border bg-background px-3 text-xs" disabled={!settings.enabled} value={settings.txPower || "High"} onChange={(event) => setSettings((previous) => ({ ...previous, txPower: event.target.value }))}>
+                      <option value={settings.txPower || "High"}>{settings.txPower || "High"}</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-[10px] uppercase text-muted-foreground">Max Clients</Label>
+                    <Input value={maxClients} onChange={(event) => setMaxClients(event.target.value)} disabled={!settings.enabled} className="rounded-xl" />
+                    <p className="text-[9px] text-muted-foreground">Range: 1 - 64</p>
+                  </div>
                 </div>
               )}
 
-              <div className="flex justify-end gap-2 pt-4 border-t">
-                <Button variant="outline" onClick={handleRefresh} disabled={isSaving}>
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Refresh
-                </Button>
-                <Button onClick={handleSave} disabled={isSaving}>
-                  <Save className="h-4 w-4 mr-2" />
-                  {isSaving ? "Saving..." : "Save Changes"}
-                </Button>
+              {activeWifiTab === "security" && (
+                <div className="space-y-4 text-xs font-semibold">
+                  <div className="space-y-1.5">
+                    <Label className="text-[10px] uppercase text-muted-foreground">Security Type</Label>
+                    <Input value={settings.security.toUpperCase()} readOnly className="rounded-xl bg-secondary/40" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-[10px] uppercase text-muted-foreground">Pre-Shared Key (Password)</Label>
+                    <div className="relative">
+                      <Input type={showPassword ? "text" : "password"} value={settings.password} onChange={(event) => setSettings((previous) => ({ ...previous, password: event.target.value }))} disabled={isSaving || !settings.enabled} className="rounded-xl pr-10 font-mono" />
+                      <button type="button" className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-indigo-500" onClick={() => setShowPassword((previous) => !previous)}>
+                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-[10px] uppercase text-muted-foreground">Encryption Mode</Label>
+                    <Input value={selectedSSID.encryptionMode || "AES"} readOnly className="rounded-xl bg-secondary/40" />
+                  </div>
+                </div>
+              )}
+
+              {activeWifiTab !== "basic" && activeWifiTab !== "security" && (
+                <div className="py-12 text-center text-muted-foreground">
+                  <p className="text-xs font-semibold">{wifiTabs.find((tab) => tab.key === activeWifiTab)?.label} settings</p>
+                  <p className="mt-1 text-[10px]">Configuration options will appear here when supported by this CPE</p>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 border-t border-border/60 pt-4">
+                <Button variant="outline" size="sm" onClick={() => void fetchWlanInfo({ preferredInstance: selectedSSID.instance })} disabled={isSaving} className="h-9 rounded-xl border-slate-200 text-xs font-bold dark:border-slate-700">Cancel</Button>
+                <Button onClick={handleSave} disabled={isSaving || !settings.enabled} className="h-9 rounded-xl bg-indigo-600 text-xs font-bold text-white hover:bg-indigo-700"><Save className="mr-1.5 h-3.5 w-3.5" />{isSaving ? "Saving..." : "Save Changes"}</Button>
               </div>
             </div>
+          </div>
+        </div>
+
+        <div className="space-y-4 lg:col-span-4">
+          {settings.enabled ? (
+            <>
+              <div className="rounded-2xl border border-slate-100/80 bg-card p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:border-slate-800/80">
+                <span className="mb-3 block text-xs font-extrabold text-slate-800 dark:text-slate-200">Signal Strength</span>
+                <div className="text-center">
+                  <div className="text-3xl font-extrabold text-slate-800 dark:text-slate-100">{signalStrength === null ? "N/A" : `${signalStrength} dBm`}</div>
+                  <Badge className={`mt-1 rounded-full border px-2.5 py-0.5 text-[9px] font-bold uppercase ${signalQuality === "Excellent" ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-500" : signalQuality === "Good" ? "border-green-500/20 bg-green-500/10 text-green-500" : signalQuality === "Fair" ? "border-amber-500/20 bg-amber-500/10 text-amber-500" : "border-rose-500/20 bg-rose-500/10 text-rose-500"}`}>{signalQuality}</Badge>
+                </div>
+                <div className="mt-4">
+                  <div className="h-3 w-full overflow-hidden rounded-full border bg-secondary"><div className={`h-full rounded-full transition-all duration-500 ${signalColor}`} style={{ width: `${signalPct}%` }} /></div>
+                  <div className="mt-1.5 flex justify-between font-mono text-[9px] text-muted-foreground"><span>-100 dBm</span><span>-60 dBm</span><span>0 dBm</span></div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-100/80 bg-card p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:border-slate-800/80">
+                <span className="mb-3 block text-xs font-extrabold text-slate-800 dark:text-slate-200">Network Information</span>
+                <div className="space-y-2 text-xs font-semibold">
+                  {[
+                    { label: "BSSID", val: selectedSSID.bssid || String(selectedSSID.parameters?.["BSSID"] || selectedSSID.parameters?.["MACAddress"] || "N/A") },
+                    { label: "Frequency", val: getFrequencyBand(selectedSSID) === "5GHz" ? "5 GHz" : "2.4 GHz" },
+                    { label: "Channel", val: String(selectedSSID.channel || "Auto") },
+                    { label: "Channel Width", val: settings.bandwidth || "20 MHz" },
+                    { label: "Mode", val: settings.mode || "802.11n" },
+                    { label: "Clients Connected", val: String(getClientCount(selectedSSID)) },
+                    { label: "Traffic", val: `↑ ${formatBytes(stats.bytesReceived)} ↓ ${formatBytes(stats.bytesSent)}` },
+                  ].map((row) => (
+                    <div key={row.label} className="flex items-center justify-between border-b border-border/40 py-1.5 last:border-0"><span className="text-[10px] font-medium text-muted-foreground">{row.label}</span><span className="text-[10px] font-mono text-slate-800 dark:text-slate-200">{row.val}</span></div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-100/80 bg-card p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:border-slate-800/80">
+                <div className="mb-3 flex items-center justify-between"><span className="text-xs font-extrabold text-slate-800 dark:text-slate-200">Interface Metrics</span><span className="text-[9px] font-medium text-muted-foreground">Realtime traffic on this SSID</span></div>
+                <div className="space-y-4">
+                  {[
+                    { label: "Bytes", received: stats.bytesReceived, sent: stats.bytesSent, formatter: formatBytes },
+                    { label: "Packets", received: stats.packetsReceived, sent: stats.packetsSent, formatter: formatNumber },
+                  ].map((metric) => {
+                    const total = metric.received + metric.sent || 1;
+                    return (
+                      <div key={metric.label} className="space-y-3 rounded-xl border bg-secondary/15 p-4">
+                        <div className="flex justify-between text-[9px] font-bold text-muted-foreground"><span>{metric.label}</span><span className="text-slate-800 dark:text-slate-200">Total: {metric.formatter(metric.received + metric.sent)}</span></div>
+                        <div><div className="mb-1 flex justify-between text-[9px] font-bold text-muted-foreground"><span>Received</span><span>{metric.formatter(metric.received)}</span></div><div className="h-1.5 w-full overflow-hidden rounded-full border bg-secondary"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.round((metric.received / total) * 100)}%` }} /></div></div>
+                        <div><div className="mb-1 flex justify-between text-[9px] font-bold text-muted-foreground"><span>Sent</span><span>{metric.formatter(metric.sent)}</span></div><div className="h-1.5 w-full overflow-hidden rounded-full border bg-secondary"><div className="h-full rounded-full bg-indigo-500" style={{ width: `${Math.round((metric.sent / total) * 100)}%` }} /></div></div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="rounded-2xl border bg-card p-10 text-center text-sm text-muted-foreground"><WifiOff className="mx-auto mb-3 h-10 w-10 opacity-50" /><p>This WiFi network is currently disabled.</p></div>
           )}
-        </CardContainer>
-
-        {/* Traffic Statistics */}
-        {selectedSSID && selectedSSID.enable && (
-          <CardContainer title="Traffic Statistics" gradientColor="#a855f7">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Bytes Chart */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-medium flex items-center gap-2">
-                    <Download className="h-4 w-4 text-green-500" />
-                    <Upload className="h-4 w-4 text-blue-500" />
-                    Bytes Transfer
-                  </h4>
-                  <div className="text-xs text-muted-foreground">
-                    Total: {formatBytes(stats.bytesReceived + stats.bytesSent)}
-                  </div>
-                </div>
-                <div className="h-48">
-                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 320, height: 192 }}>
-                    <PieChart>
-                      <Pie
-                        data={getTrafficData()}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={60}
-                        outerRadius={80}
-                        paddingAngle={5}
-                        dataKey="value"
-                      >
-                        {getTrafficData().map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.color} />
-                        ))}
-                      </Pie>
-                      <Tooltip
-                        formatter={(value: any) => formatBytes(Number(value || 0))}
-                        contentStyle={{
-                          backgroundColor: "hsl(var(--background))",
-                          border: "1px solid hsl(var(--border))",
-                        }}
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="p-2 bg-green-500/10 rounded-md">
-                    <div className="font-medium text-green-600 dark:text-green-400">Received</div>
-                    <div className="text-sm font-bold">{formatBytes(stats.bytesReceived)}</div>
-                  </div>
-                  <div className="p-2 bg-blue-500/10 rounded-md">
-                    <div className="font-medium text-blue-600 dark:text-blue-400">Sent</div>
-                    <div className="text-sm font-bold">{formatBytes(stats.bytesSent)}</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Packets Chart */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-medium flex items-center gap-2">
-                    <Activity className="h-4 w-4" />
-                    Packets Transfer
-                  </h4>
-                  <div className="text-xs text-muted-foreground">
-                    Total: {formatNumber(stats.packetsReceived + stats.packetsSent)}
-                  </div>
-                </div>
-                <div className="h-48">
-                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 320, height: 192 }}>
-                    <PieChart>
-                      <Pie
-                        data={getPacketData()}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={60}
-                        outerRadius={80}
-                        paddingAngle={5}
-                        dataKey="value"
-                      >
-                        {getPacketData().map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.color} />
-                        ))}
-                      </Pie>
-                      <Tooltip
-                        formatter={(value: any) => formatNumber(Number(value || 0))}
-                        contentStyle={{
-                          backgroundColor: "hsl(var(--background))",
-                          border: "1px solid hsl(var(--border))",
-                        }}
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="p-2 bg-green-500/10 rounded-md">
-                    <div className="font-medium text-green-600 dark:text-green-400">Received</div>
-                    <div className="text-sm font-bold">{formatNumber(stats.packetsReceived)}</div>
-                  </div>
-                  <div className="p-2 bg-blue-500/10 rounded-md">
-                    <div className="font-medium text-blue-600 dark:text-blue-400">Sent</div>
-                    <div className="text-sm font-bold">{formatNumber(stats.packetsSent)}</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Detailed Statistics */}
-            <div className="mt-6 pt-4 border-t">
-              <h4 className="text-sm font-medium mb-3">Detailed Statistics</h4>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-                <div className="p-2 bg-muted rounded-md">
-                  <div className="text-muted-foreground">Unicast RX</div>
-                  <div className="font-medium">{formatNumber(stats.unicastReceived)}</div>
-                </div>
-                <div className="p-2 bg-muted rounded-md">
-                  <div className="text-muted-foreground">Unicast TX</div>
-                  <div className="font-medium">{formatNumber(stats.unicastSent)}</div>
-                </div>
-                <div className="p-2 bg-muted rounded-md">
-                  <div className="text-muted-foreground">Multicast RX</div>
-                  <div className="font-medium">{formatNumber(stats.multicastReceived)}</div>
-                </div>
-                <div className="p-2 bg-muted rounded-md">
-                  <div className="text-muted-foreground">Multicast TX</div>
-                  <div className="font-medium">{formatNumber(stats.multicastSent)}</div>
-                </div>
-                <div className="p-2 bg-muted rounded-md">
-                  <div className="text-muted-foreground">Broadcast RX</div>
-                  <div className="font-medium">{formatNumber(stats.broadcastReceived)}</div>
-                </div>
-                <div className="p-2 bg-muted rounded-md">
-                  <div className="text-muted-foreground">Broadcast TX</div>
-                  <div className="font-medium">{formatNumber(stats.broadcastSent)}</div>
-                </div>
-                <div className="p-2 bg-red-500/10 rounded-md">
-                  <div className="text-red-600 dark:text-red-400">Errors RX</div>
-                  <div className="font-medium">{formatNumber(stats.errorsReceived)}</div>
-                </div>
-                <div className="p-2 bg-red-500/10 rounded-md">
-                  <div className="text-red-600 dark:text-red-400">Errors TX</div>
-                  <div className="font-medium">{formatNumber(stats.errorsSent)}</div>
-                </div>
-              </div>
-            </div>
-          </CardContainer>
-        )}
-
-        {/* No data message for disabled SSIDs */}
-        {selectedSSID && !selectedSSID.enable && (
-          <CardContainer title="Traffic Statistics" gradientColor="#a855f7">
-            <div className="text-center py-12 text-muted-foreground">
-              <WifiOff className="h-12 w-12 mx-auto mb-3 opacity-50" />
-              <p>This WiFi network is currently disabled.</p>
-              <p className="text-sm">Use the switch above to enable it.</p>
-            </div>
-          </CardContainer>
-        )}
+        </div>
       </div>
     </div>
   );

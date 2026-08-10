@@ -369,6 +369,10 @@ import { toast } from "react-hot-toast"
 import { apiRequest } from "@/lib/api"
 import { motion } from "framer-motion"
 import { useConfirmToast } from "@/hooks/use-confirm-toast"
+import { OLTTerminal } from "@/components/fiber/olt-terminal"
+import { OLTManagementSummary, OLTModernAnalytics, OLTModernOverview, OLTSelectedDeviceBanner } from "@/components/fiber/olt-management-modern"
+import { SplitterDetailsModern } from "@/components/fiber/splitter-details-modern"
+import { useAuth } from "@/contexts/AuthContext"
 
 interface ServiceBoard {
   id: string
@@ -531,9 +535,9 @@ interface Splitter {
   id: string
   name: string
   splitterId: string
-  splitRatio: "1:2" | "1:4" | "1:8" | "1:16" | "1:32" | "1:64 | "
+  splitRatio: string
   ratio: number
-  splitterType: "PLC" | "FBT"
+  splitterType: "PLC" | "FBT" | "COUPLER"
   portCount: number
   usedPorts: number
   availablePorts: number
@@ -629,8 +633,14 @@ const SPLITTER_TYPES = [
 // Splitter technology types
 const SPLITTER_TECH_TYPES = [
   { value: "PLC", label: "PLC (Planar Lightwave Circuit)" },
-  { value: "FBT", label: "FBT (Fused Biconical Taper)" }
+  { value: "FBT", label: "FBT (Fused Biconical Taper)" },
+  { value: "COUPLER", label: "Optical Coupler (Asymmetric)" }
 ]
+
+const COUPLER_TYPES = [
+  "1:99", "2:98", "5:95", "10:90", "15:85", "20:80", "25:75",
+  "30:70", "35:65", "40:60", "45:55", "50:50",
+].map((value) => ({ value, label: value }))
 
 // Fiber core colors
 const FIBER_CORE_COLORS = [
@@ -642,6 +652,9 @@ const FIBER_CORE_COLORS = [
 type UpdateType = "basic" | "ssh" | "telnet" | "snmp" | "web" | "api" | "location" | "service-boards" | "advanced" | "status"
 
 export function OLTDetailed() {
+  const { user } = useAuth()
+  const roleName = typeof user?.role === "string" ? user.role : user?.role?.name
+  const isAdministrator = ["administrator", "admin", "isp_admin", "super admin", "super_admin"].includes(String(roleName || "").toLowerCase())
   // State management
   const [olts, setOlts] = useState<OLT[]>([])
   const [showTerminal, setShowTerminal] = useState(false)
@@ -671,16 +684,40 @@ export function OLTDetailed() {
   const [showSSHDialog, setShowSSHDialog] = useState(false)
   const [showUpdateDialog, setShowUpdateDialog] = useState(false)
   const [showTerminalDialog, setShowTerminalDialog] = useState(false)
+  const [xtermModalOlt, setXtermModalOlt] = useState<OLT | null>(null)
   const [showONTDetails, setShowONTDetails] = useState(false)
   const [showSSHTestDialog, setShowSSHTestDialog] = useState(false)
   const [showAddSplitterDialog, setShowAddSplitterDialog] = useState(false)
   const [showSplitterDetails, setShowSplitterDetails] = useState(false)
   const [updateType, setUpdateType] = useState<UpdateType>("basic")
+  const [oltOwnerType, setOltOwnerType] = useState<"none" | "branch" | "reseller">("none")
+  const [oltOwnerId, setOltOwnerId] = useState("")
+  const [oltBranches, setOltBranches] = useState<Array<{ id: number; name: string; code: string }>>([])
+  const [oltResellers, setOltResellers] = useState<Array<{ id: number; name: string; code: string }>>([])
+
+  useEffect(() => {
+    if (!isAdministrator) return
+    const loadOwners = async () => {
+      try {
+        const [branchResponse, resellerResponse] = await Promise.all([
+          apiRequest<any>("/branches", { suppressToast: true }),
+          apiRequest<{ success: boolean; data: Array<{ id: number; name: string; code: string }> }>("/resellers?limit=100", { suppressToast: true })
+        ])
+        setOltBranches(Array.isArray(branchResponse) ? branchResponse : branchResponse?.data || [])
+        setOltResellers(resellerResponse?.data || [])
+      } catch {
+        setOltBranches([])
+        setOltResellers([])
+      }
+    }
+    void loadOwners()
+  }, [isAdministrator])
 
   // Search and filter
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
   const [vendorFilter, setVendorFilter] = useState<string>("all")
+  const [splitterStatusFilter, setSplitterStatusFilter] = useState<string>("all")
 
   // Terminal
   const [terminalOutput, setTerminalOutput] = useState<string>("")
@@ -806,9 +843,9 @@ export function OLTDetailed() {
   const [splitterForm, setSplitterForm] = useState({
     name: "",
     splitterId: "",
-    splitRatio: "1:8" as "1:2" | "1:4" | "1:8" | "1:16" | "1:32" | "1:64" | "2:2" | "2:4" | "2:8" | "2:16" | "2:32" | "2:64" | "4:4" | "4:8" | "4:16" | "4:32" | "4:64" | "8:8" | "8:16" | "8:32" | "8:64",
+    splitRatio: "1:8" as string,
     ratio: 8,
-    splitterType: "PLC" as "PLC" | "FBT",
+    splitterType: "PLC" as "PLC" | "FBT" | "COUPLER",
     portCount: 8,
     usedPorts: 0,
     availablePorts: 8,
@@ -1520,6 +1557,37 @@ export function OLTDetailed() {
     }
   }
 
+  // Selecting the first OLT happens asynchronously after the component mounts.
+  // Load its saved ONTs immediately instead of waiting for a manual refresh.
+  useEffect(() => {
+    if (!selectedOLT?.id) {
+      setOnts([])
+      return
+    }
+    void fetchONTs(String(selectedOLT.id), 1, "", "all")
+  }, [selectedOLT?.id])
+
+  const refreshONTList = async (oltId: string, notify = true) => {
+    setRefreshing(true)
+    let liveSyncError: any = null
+    try {
+      try {
+        await apiRequest(`/olt/${oltId}/onts/sync-basic`, { method: "POST" })
+      } catch (error) {
+        liveSyncError = error
+        console.error("Live ONT refresh failed; loading saved data:", error)
+      }
+      await fetchONTs(oltId, 1, ontSearch, ontStatusFilter)
+      await Promise.all([fetchOLTs(oltPagination.page), fetchOltStats()])
+      if (notify) {
+        if (liveSyncError) toast.error(liveSyncError?.message || "Loaded saved ONTs, but live OLT synchronization failed")
+        else toast.success("ONT inventory updated from the OLT")
+      }
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   // Sync ONTs from OLT via SSH
   const syncONTs = async (oltId: string) => {
     try {
@@ -1593,40 +1661,10 @@ export function OLTDetailed() {
     }
   }
 
-  // Connect to OLT terminal via SSH using executeBatchCommands
-  const connectToTerminal = async (olt: OLT) => {
-    try {
-      setTerminalConnected(true)
-      setTerminalOutput("Connecting to OLT terminal...\n")
-
-      // Use executeBatchCommands for terminal session
-      const initialCommands = [
-        "screen-length 0 temporary",
-        "display version",
-        "display board"
-      ]
-
-      const response = await apiRequest<{
-        success: boolean;
-        output: string;
-      }>(
-        `/olt/${olt.id}/execute-batch`,
-        {
-          method: "POST",
-          body: JSON.stringify({ commands: initialCommands })
-        }
-      )
-
-      if (response.success) {
-        setTerminalOutput(response.output)
-        setShowTerminalDialog(true)
-        toast.success("Terminal connected successfully")
-      }
-    } catch (error: any) {
-      console.error("Failed to connect to terminal:", error)
-      toast.error(error.message || "Failed to connect to terminal")
-      setTerminalConnected(false)
-    }
+  // Connect to OLT terminal via WebSockets and xterm
+  const connectToTerminal = (olt: OLT) => {
+    setSelectedOLT(olt)
+    setXtermModalOlt(olt)
   }
 
   // Send terminal command via SSH using executeBatchCommands
@@ -1674,7 +1712,7 @@ export function OLTDetailed() {
       await fetchOLTs(oltPagination.page)
       await fetchOltStats()
       if (selectedOLT) {
-        await fetchONTs(selectedOLT.id, ontPagination.page, ontSearch, ontStatusFilter)
+        await refreshONTList(String(selectedOLT.id), false)
       }
       await fetchSplitters(splitterPagination.page)
       toast.success("Data refreshed")
@@ -1912,7 +1950,8 @@ export function OLTDetailed() {
 
       // Calculate total ports based on split ratio format
       // For formats like "1:8", "2:8", "4:8", etc.
-      const totalPorts = outputCount;
+      // Coupler ratios describe the percentage split, not the physical port count.
+      const totalPorts = splitterForm.splitterType === "COUPLER" ? 2 : outputCount;
 
       setSplitterForm({
         ...splitterForm,
@@ -2226,6 +2265,115 @@ export function OLTDetailed() {
         status: board.status
       })) || []
     )
+  }
+
+  const openSplitterEditor = async (splitter: Splitter) => {
+    setShowSplitterDetails(false)
+    setSelectedSplitter(splitter)
+    const ratioValue = parseInt(splitter.splitRatio.split(':')[1]) || 8
+    let parentSplitterId = ""
+    if (splitter.masterSplitterId) {
+      const parent = allSplitters.find(item => item.splitterId === splitter.masterSplitterId)
+      if (parent) parentSplitterId = parent.id
+    }
+
+    setSplitterForm({
+      name: splitter.name,
+      splitterId: splitter.splitterId,
+      splitRatio: splitter.splitRatio as any,
+                    splitterType: splitter.splitterType as "PLC" | "FBT" | "COUPLER",
+      portCount: splitter.portCount,
+      usedPorts: splitter.usedPorts,
+      availablePorts: splitter.availablePorts,
+      location: {
+        site: splitter.location.site || "",
+        latitude: splitter.location.latitude ?? 0,
+        longitude: splitter.location.longitude ?? 0,
+        description: splitter.location.description || ""
+      },
+      upstreamFiber: {
+        coreColor: splitter.upstreamFiber.coreColor,
+        connectedTo: splitter.upstreamFiber.connectedTo,
+        connectionId: splitter.upstreamFiber.connectionId || "",
+        port: splitter.upstreamFiber.port || ""
+      },
+      isMaster: splitter.isMaster,
+      masterSplitterId: parentSplitterId,
+      connectedServiceBoard: splitter.connectedServiceBoard,
+      status: splitter.status,
+      notes: splitter.notes || "",
+      ratio: ratioValue
+    })
+
+    await fetchAllSplittersForHierarchy()
+    if (splitter.isMaster && splitter.connectedServiceBoard?.oltId) {
+      await fetchAvailablePorts(splitter.connectedServiceBoard.oltId)
+    } else {
+      setAvailablePorts([])
+    }
+    setShowAddSplitterDialog(true)
+  }
+
+  const openNewSplitterDialog = async () => {
+    setSelectedSplitter(null)
+    setSplitterForm({
+      name: "",
+      splitterId: "",
+      splitRatio: "1:8",
+      ratio: 8,
+      splitterType: "PLC",
+      portCount: 8,
+      usedPorts: 0,
+      availablePorts: 8,
+      isMaster: false,
+      masterSplitterId: "",
+      location: { site: "", latitude: 0, longitude: 0, description: "" },
+      upstreamFiber: { coreColor: "Blue", connectedTo: "service-board", connectionId: "", port: "" },
+      connectedServiceBoard: undefined,
+      status: "active",
+      notes: ""
+    })
+    setAvailablePorts([])
+    await fetchAllSplittersForHierarchy()
+    setShowAddSplitterDialog(true)
+  }
+
+  const openSplitterMap = (splitter: Splitter) => {
+    if (!splitter.location.latitude || !splitter.location.longitude) {
+      toast.error("No location coordinates available for this splitter")
+      return
+    }
+    setMapLocation({
+      latitude: splitter.location.latitude,
+      longitude: splitter.location.longitude,
+      name: splitter.name,
+      site: splitter.location.site || "Splitter Location"
+    })
+    setShowMapDialog(true)
+  }
+
+  const copySplitterDetails = async (splitter: Splitter) => {
+    const connectionPath = getConnectionPath(splitter, allSplitters)
+    const coordinates = splitter.location.latitude && splitter.location.longitude
+      ? `Coordinates: ${splitter.location.latitude.toFixed(6)}, ${splitter.location.longitude.toFixed(6)}`
+      : ""
+    const text = [
+      `Splitter Details - ${splitter.name} (${splitter.splitterId})`,
+      "",
+      `Type: ${splitter.splitterType}`,
+      `Ratio: ${splitter.splitRatio}`,
+      `Status: ${splitter.status}`,
+      `Role: ${splitter.isMaster ? "Master" : "Slave"}`,
+      `Ports: ${splitter.usedPorts}/${splitter.portCount} (${splitter.availablePorts} available)`,
+      "",
+      `Connection Path: ${connectionPath.join(" → ")}`,
+      `Location: ${splitter.location.site || "Not specified"}`,
+      coordinates,
+      `Updated: ${formatDate(splitter.updatedAt)}`
+    ].filter(Boolean).join("\n")
+
+    await navigator.clipboard.writeText(text)
+    toast.success("Splitter details copied to clipboard")
   }
 
   const handleOLTSelection = (value: string) => {
@@ -2858,11 +3006,19 @@ export function OLTDetailed() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="olt-management-ui space-y-5">
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-
+          <div className="flex items-center gap-3">
+            <span className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary">
+              <Activity className="size-5" />
+            </span>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">OLT Management</h1>
+              <p className="text-xs text-muted-foreground">Complete OLT details, optical inventory, splitters, ports, and live operations</p>
+            </div>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -2874,23 +3030,32 @@ export function OLTDetailed() {
             <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-          <Button
-            size="sm"
-            onClick={() => setShowAddDialog(true)}
-            className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Add OLT
-          </Button>
+          {(activeTab === "splitters" || isAdministrator) && (
+            <Button
+              size="sm"
+              onClick={() => activeTab === "splitters" ? openNewSplitterDialog() : setShowAddDialog(true)}
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              {activeTab === "splitters" ? "Add Splitter" : "Add OLT"}
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* Stats Overview */}
+      <OLTManagementSummary olts={olts} stats={oltStats} />
+      {activeTab !== "overview" && <OLTSelectedDeviceBanner
+        olt={selectedOLT}
+        onDetails={() => setActiveTab("details")}
+        onTerminal={() => selectedOLT && connectToTerminal(selectedOLT)}
+      />}
+
+      {/* Legacy stat cards retained for compatibility with existing state. */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
-        className="grid gap-4 md:grid-cols-2 lg:grid-cols-4"
+        className="hidden"
       >
         <OLTStatCard
           title="Total OLTs"
@@ -2928,17 +3093,28 @@ export function OLTDetailed() {
 
       {/* Main Content */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="olt-primary-tabs grid h-12 w-full grid-cols-3 rounded-xl border border-border bg-card px-2 shadow-sm md:grid-cols-6">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="olts">OLT List</TabsTrigger>
           <TabsTrigger value="onts">ONT List</TabsTrigger>
           <TabsTrigger value="splitters">Splitters</TabsTrigger>
           <TabsTrigger value="details">OLT Details</TabsTrigger>
+          <TabsTrigger value="analytics">Analytics</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="overview" className="space-y-6">
+        <TabsContent value="overview" className="olt-tab-panel olt-overview-panel space-y-6">
+          <OLTModernOverview
+            olts={olts}
+            stats={oltStats}
+            selectedOlt={selectedOLT}
+            onSelect={(olt) => setSelectedOLT(olt as OLT)}
+            onOpenDetails={(olt) => { setSelectedOLT(olt as OLT); setActiveTab("details") }}
+            onOpenOnts={(olt) => { setSelectedOLT(olt as OLT); fetchONTs(String(olt.id), 1, "", "all"); setActiveTab("onts") }}
+            onOpenSplitters={(olt) => { setSelectedOLT(olt as OLT); setActiveTab("splitters") }}
+            onTerminal={(olt) => connectToTerminal(olt as OLT)}
+          />
           {/* OLT Status Dashboard */}
-          <Card className={`${isDarkMode ? "bg-gradient-to-br from-[#0f172a] to-[#1e293b]" : "bg-gradient-to-br from-white to-gray-50"} border-0 rounded-2xl shadow-xl overflow-hidden relative`}>
+          <Card className={`hidden ${isDarkMode ? "bg-gradient-to-br from-[#0f172a] to-[#1e293b]" : "bg-gradient-to-br from-white to-gray-50"} border-0 rounded-2xl shadow-xl overflow-hidden relative`}>
             {/* Animated background gradient */}
             <div className="absolute inset-0 bg-gradient-to-r from-blue-500/5 via-purple-500/5 to-cyan-500/5" />
 
@@ -3014,14 +3190,14 @@ export function OLTDetailed() {
                   <p className="text-gray-400 mb-6 max-w-md mx-auto">
                     Start by adding your first Optical Line Terminal to monitor network performance and manage ONTs
                   </p>
-                  <Button
+                  {isAdministrator && <Button
                     size="lg"
                     onClick={() => setShowAddDialog(true)}
                     className="bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-0.5"
                   >
                     <Plus className="h-5 w-5 mr-2" />
                     Add First OLT
-                  </Button>
+                  </Button>}
                 </div>
               ) : (
                 <div className="space-y-6">
@@ -3365,14 +3541,14 @@ export function OLTDetailed() {
                     />
                   </div>
 
-                  <Button
+                  {isAdministrator && <Button
                     variant="outline"
                     onClick={handleClearFilters}
                     className="flex items-center gap-2"
                   >
                     <X className="h-4 w-4" />
                     Clear
-                  </Button>
+                  </Button>}
                 </div>
               </div>
 
@@ -3630,7 +3806,6 @@ export function OLTDetailed() {
                       const olt = olts.find(o => String(o.id) === String(value))
                       if (olt) {
                         setSelectedOLT(olt)
-                        fetchONTs(olt.id, 1, ontSearch, ontStatusFilter)
                       }
                     }}
                     placeholder="Select OLT"
@@ -3638,24 +3813,13 @@ export function OLTDetailed() {
                   />
                   {selectedOLT && (
                     <div className="flex items-center gap-2">
-                      {/* Refresh List - From Database */}
+                      {/* Refresh from the device, persist it, then reload the list. */}
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={async () => {
-                          try {
-                            setRefreshing(true);
-                            await fetchONTs(selectedOLT.id, 1, ontSearch, ontStatusFilter);
-                            toast.success("ONT list refreshed");
-                          } catch (error) {
-                            console.error("Failed to fetch ONTs:", error);
-                            toast.error("Failed to refresh ONT list");
-                          } finally {
-                            setRefreshing(false);
-                          }
-                        }}
+                        onClick={() => refreshONTList(String(selectedOLT.id))}
                         disabled={refreshing}
-                        title="Refresh from database"
+                        title="Synchronize ONTs from the OLT and reload the list"
                       >
                         <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
                         Refresh List
@@ -4441,7 +4605,7 @@ export function OLTDetailed() {
                                         name: splitter.name,
                                         splitterId: splitter.splitterId,
                                         splitRatio: splitter.splitRatio as any,
-                                        splitterType: splitter.splitterType as "PLC" | "FBT",
+                                          splitterType: splitter.splitterType as "PLC" | "FBT" | "COUPLER",
                                         portCount: splitter.portCount,
                                         usedPorts: splitter.usedPorts,
                                         availablePorts: splitter.availablePorts,
@@ -4704,7 +4868,7 @@ export function OLTDetailed() {
                                             name: slave.name,
                                             splitterId: slave.splitterId,
                                             splitRatio: slave.splitRatio as any,
-                                            splitterType: slave.splitterType as "PLC" | "FBT",
+                                            splitterType: slave.splitterType as "PLC" | "FBT" | "COUPLER",
                                             portCount: slave.portCount,
                                             usedPorts: slave.usedPorts,
                                             availablePorts: slave.availablePorts,
@@ -5309,20 +5473,9 @@ export function OLTDetailed() {
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={async () => {
-                                try {
-                                  setRefreshing(true);
-                                  await fetchONTs(selectedOLT.id, 1, ontSearch, ontStatusFilter);
-                                  toast.success("ONT list refreshed");
-                                } catch (error) {
-                                  console.error("Failed to fetch ONTs:", error);
-                                  toast.error("Failed to refresh ONT list");
-                                } finally {
-                                  setRefreshing(false);
-                                }
-                              }}
+                              onClick={() => refreshONTList(String(selectedOLT.id))}
                               disabled={refreshing}
-                              title="Refresh from database"
+                              title="Synchronize ONTs from the OLT and reload the list"
                             >
                               <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
                               Refresh List
@@ -5867,7 +6020,7 @@ export function OLTDetailed() {
                                                     name: splitter.name,
                                                     splitterId: splitter.splitterId,
                                                     splitRatio: splitter.splitRatio as any,
-                                                    splitterType: splitter.splitterType as "PLC" | "FBT",
+                                                    splitterType: splitter.splitterType as "PLC" | "FBT" | "COUPLER",
                                                     portCount: splitter.portCount,
                                                     usedPorts: splitter.usedPorts,
                                                     availablePorts: splitter.availablePorts,
@@ -6131,7 +6284,7 @@ export function OLTDetailed() {
                                                         name: slave.name,
                                                         splitterId: slave.splitterId,
                                                         splitRatio: slave.splitRatio as any,
-                                                        splitterType: slave.splitterType as "PLC" | "FBT",
+                                                        splitterType: slave.splitterType as "PLC" | "FBT" | "COUPLER",
                                                         portCount: slave.portCount,
                                                         usedPorts: slave.usedPorts,
                                                         availablePorts: slave.availablePorts,
@@ -6668,6 +6821,9 @@ export function OLTDetailed() {
               </CardContent>
             </Card>
           )}
+        </TabsContent>
+        <TabsContent value="analytics" className="olt-tab-panel olt-analytics-panel space-y-6">
+          <OLTModernAnalytics olts={olts} />
         </TabsContent>
       </Tabs>
 
@@ -7765,15 +7921,15 @@ export function OLTDetailed() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="splitter-type">Splitter Type</Label>
+                <Label htmlFor="splitter-type">Split Ratio</Label>
                 <SearchableSelect
-                  options={SPLITTER_TYPES.map(type => ({
+                  options={(splitterForm.splitterType === "COUPLER" ? COUPLER_TYPES : SPLITTER_TYPES).map(type => ({
                     value: type.value,
                     label: type.label
                   }))}
                   value={splitterForm.splitRatio}
-                  onValueChange={handleSplitRatioChange}
-                  placeholder="Select splitter type"
+                  onValueChange={(value) => handleSplitRatioChange(String(value))}
+                  placeholder="Select split ratio"
                 />
               </div>
               <div className="space-y-2">
@@ -7784,10 +7940,19 @@ export function OLTDetailed() {
                     label: type.label
                   }))}
                   value={splitterForm.splitterType}
-                  onValueChange={(value) => setSplitterForm({
-                    ...splitterForm,
-                    splitterType: value as "PLC" | "FBT"
-                  })}
+                  onValueChange={(value) => {
+                    const technology = String(value) as "PLC" | "FBT" | "COUPLER"
+                    const isCoupler = technology === "COUPLER"
+                    setSplitterForm({
+                      ...splitterForm,
+                      splitterType: technology,
+                      splitRatio: isCoupler ? "5:95" : "1:8",
+                      ratio: isCoupler ? 95 : 8,
+                      portCount: isCoupler ? 2 : 8,
+                      usedPorts: Math.min(splitterForm.usedPorts, isCoupler ? 2 : 8),
+                      availablePorts: Math.max(0, (isCoupler ? 2 : 8) - splitterForm.usedPorts),
+                    })
+                  }}
                   placeholder="Select technology"
                 />
               </div>
@@ -8280,662 +8445,20 @@ export function OLTDetailed() {
       </Dialog>
 
       {/* Splitter Details Dialog */}
-      {/* Splitter Details Dialog */}
       <Dialog open={showSplitterDetails} onOpenChange={setShowSplitterDetails}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Splitter Details</DialogTitle>
-            <DialogDescription>
-              Detailed information for {selectedSplitter?.name} ({selectedSplitter?.splitterId})
-            </DialogDescription>
-          </DialogHeader>
-
-          {selectedSplitter && (
-            <div className="space-y-6">
-              {/* Header with Status */}
-              <div className="flex items-start justify-between">
-                <div>
-                  <h3 className="text-2xl font-bold">{selectedSplitter.name}</h3>
-                  <div className="flex items-center gap-2 mt-1">
-                    <code className="text-sm bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
-                      ID: {selectedSplitter.splitterId}
-                    </code>
-                    <Badge className={getSplitterStatusColor(selectedSplitter.status)}>
-                      {selectedSplitter.status}
-                    </Badge>
-                  </div>
-                </div>
-                <Badge className={
-                  selectedSplitter.isMaster
-                    ? "bg-purple-500/10 text-purple-500 border-purple-500/20"
-                    : "bg-gray-500/10 text-gray-500 border-gray-500/20"
-                }>
-                  {selectedSplitter.isMaster ? "Master Splitter" : "Slave Splitter"}
-                </Badge>
-              </div>
-
-              <Separator />
-
-              {/* Splitter Information Grid */}
-              <div className="grid gap-6 md:grid-cols-2">
-                {/* Left Column - Basic Information */}
-                <div className="space-y-6">
-                  {/* Splitter Specifications */}
-                  <div className="space-y-4">
-                    <h4 className="font-semibold text-lg flex items-center gap-2">
-                      <Split className="h-5 w-5 text-blue-500" />
-                      Splitter Specifications
-                    </h4>
-                    <div className="grid gap-4">
-                      <div className="space-y-2">
-                        <Label className="text-sm text-gray-500">Splitter Type</Label>
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20">
-                            {selectedSplitter.splitterType}
-                          </Badge>
-                          <span className="text-sm">({selectedSplitter.splitterType === 'FBT' ? 'Fused Biconical Taper' : 'Planar Lightwave Circuit'})</span>
-                        </div>
-                      </div>
-                      <div className="space-y-2">
-                        <Label className="text-sm text-gray-500">Split Ratio</Label>
-                        <div className="text-xl font-bold text-purple-600">
-                          {selectedSplitter.splitRatio}
-                        </div>
-                        <p className="text-sm text-gray-500">
-                          {(() => {
-                            const parts = selectedSplitter.splitRatio.split(':');
-                            const input = parts[0];
-                            const output = parts[1];
-                            return `1 input to ${output} outputs`;
-                          })()}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Port Information */}
-                  <div className="space-y-4">
-                    <h4 className="font-semibold text-lg flex items-center gap-2">
-                      <Network className="h-5 w-5 text-green-500" />
-                      Port Information
-                    </h4>
-                    <div className="grid grid-cols-3 gap-4">
-                      <div className="p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg text-center">
-                        <div className="text-2xl font-bold">{selectedSplitter.portCount}</div>
-                        <div className="text-sm text-gray-500">Total Ports</div>
-                      </div>
-                      <div className="p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg text-center">
-                        <div className="text-2xl font-bold text-green-600">{selectedSplitter.usedPorts}</div>
-                        <div className="text-sm text-gray-500">Used Ports</div>
-                      </div>
-                      <div className="p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg text-center">
-                        <div className="text-2xl font-bold text-blue-600">{selectedSplitter.availablePorts}</div>
-                        <div className="text-sm text-gray-500">Available</div>
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex justify-between text-sm">
-                        <span>Port Utilization</span>
-                        <span>{Math.round((selectedSplitter.usedPorts / selectedSplitter.portCount) * 100)}%</span>
-                      </div>
-                      <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                        <div
-                          className="bg-green-500 h-2 rounded-full"
-                          style={{ width: `${(selectedSplitter.usedPorts / selectedSplitter.portCount) * 100}%` }}
-                        />
-                      </div>
-                    </div>
-                    {selectedSplitter.isMaster && (selectedSplitter.slaveCount ?? 0) > 0 && (
-                      <div className="p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg">
-                        <div className="flex items-center gap-2">
-                          <Server className="h-4 w-4 text-purple-500" />
-                          <span className="font-medium">Connected Slaves: {selectedSplitter.slaveCount}</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Right Column - Connection Information */}
-                <div className="space-y-6">
-                  {/* Connection Hierarchy */}
-                  {/* Connection Hierarchy */}
-                  <div className="space-y-4">
-                    <h4 className="font-semibold text-lg flex items-center gap-2">
-                      <Globe className="h-5 w-5 text-orange-500" />
-                      Connection Hierarchy
-                    </h4>
-
-                    {(() => {
-                      const connectionPath = getConnectionPath(selectedSplitter, allSplitters);
-                      const rootOltId = findRootOltForSplitter(selectedSplitter, allSplitters);
-                      const rootOlt = olts.find(o => String(o.id) === String(rootOltId));
-
-                      // Function to get full hierarchical path with all intermediate splitters
-                      const getFullHierarchyPath = (splitter: Splitter): any[] => {
-                        const path = [];
-                        let currentSplitter = splitter;
-
-                        // Add current splitter
-                        path.push({
-                          type: 'splitter',
-                          data: currentSplitter,
-                          level: 0
-                        });
-
-                        // Trace back through parents
-                        const visitedHierarchy = new Set<string>();
-                        while (currentSplitter) {
-                          if (visitedHierarchy.has(currentSplitter.splitterId)) {
-                            break;
-                          }
-                          visitedHierarchy.add(currentSplitter.splitterId);
-
-                          const directOlt = (currentSplitter as any).olt || (currentSplitter as any).oltId;
-
-                          if (currentSplitter.connectedServiceBoard) {
-                            // Found OLT connection
-                            const olt = olts.find(o => String(o.id) === String(currentSplitter.connectedServiceBoard?.oltId));
-                            path.push({
-                              type: 'olt',
-                              data: olt || {
-                                name: currentSplitter.connectedServiceBoard.oltName,
-                                ipAddress: 'Unknown IP'
-                              },
-                              connection: {
-                                port: currentSplitter.connectedServiceBoard.boardPort,
-                                slot: currentSplitter.connectedServiceBoard.boardSlot
-                              },
-                              level: path.length
-                            });
-                            break;
-                          } else if (currentSplitter.masterSplitterId) {
-                            // Find parent splitter
-                            const parentSplitter = allSplitters.find(s => s.splitterId === currentSplitter.masterSplitterId);
-                            if (parentSplitter) {
-                              path.push({
-                                type: 'splitter',
-                                data: parentSplitter,
-                                level: path.length,
-                                connection: 'parent'
-                              });
-                              currentSplitter = parentSplitter;
-                            } else {
-                              // Parent not found
-                              path.push({
-                                type: 'unknown',
-                                data: { name: `Parent Splitter (${currentSplitter.masterSplitterId})` },
-                                level: path.length
-                              });
-                              break;
-                            }
-                          } else {
-                            // No connection
-                            path.push({
-                              type: 'none',
-                              data: { name: 'Not Connected' },
-                              level: path.length
-                            });
-                            break;
-                          }
-                        }
-
-                        return path;
-                      };
-
-                      const fullPath = getFullHierarchyPath(selectedSplitter);
-
-                      return (
-                        <div className="space-y-4">
-                          {/* Connection Flow Diagram */}
-                          <div className="p-4 bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-900/30 dark:to-gray-800/30 rounded-lg">
-                            <div className="space-y-3">
-                              {fullPath.map((item, index) => (
-                                <div key={index} className="flex items-center">
-                                  {index > 0 && (
-                                    <div className="flex flex-col items-center w-8 mx-2">
-                                      <div className="h-4 w-px bg-gray-300 dark:bg-gray-600"></div>
-                                      <ChevronDown className="h-4 w-4 text-gray-400" />
-                                      <div className="h-4 w-px bg-gray-300 dark:bg-gray-600"></div>
-                                    </div>
-                                  )}
-                                  <div className={`flex-1 flex items-center gap-3 px-4 py-3 rounded-lg ${item.type === 'olt'
-                                    ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300 border-l-4 border-green-500'
-                                    : item.type === 'splitter'
-                                      ? index === 0
-                                        ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 border-l-4 border-blue-500'
-                                        : 'bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300 border-l-4 border-purple-500'
-                                      : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-400 border-l-4 border-gray-400'
-                                    }`}>
-                                    <div className="flex items-center gap-3">
-                                      {item.type === 'olt' ? (
-                                        <Server className="h-5 w-5" />
-                                      ) : item.type === 'splitter' ? (
-                                        <Split className="h-5 w-5" />
-                                      ) : (
-                                        <XCircle className="h-5 w-5" />
-                                      )}
-                                      <div className="flex-1">
-                                        <div className="font-semibold">
-                                          {item.type === 'olt' ? 'OLT: ' : ''}
-                                          {item.data.name}
-                                        </div>
-                                        <div className="text-sm opacity-75">
-                                          {item.type === 'olt' && (
-                                            <code className="text-xs bg-black/10 dark:bg-white/10 px-1.5 py-0.5 rounded">
-                                              {item.data.ipAddress}
-                                            </code>
-                                          )}
-                                          {item.type === 'splitter' && (
-                                            <>
-                                              <div>ID: <code className="text-xs">{item.data.splitterId}</code></div>
-                                              <div>Type: {item.data.isMaster ? 'Master' : 'Slave'} • Ratio: {item.data.splitRatio}</div>
-                                            </>
-                                          )}
-                                        </div>
-                                      </div>
-                                    </div>
-
-                                    {/* Connection details badge */}
-                                    {item.type === 'olt' && item.connection && (
-                                      <Badge className="ml-auto bg-green-500/20 text-green-700 dark:text-green-300 border-green-500/30">
-                                        Port: {item.connection.port}
-                                      </Badge>
-                                    )}
-                                    {item.type === 'splitter' && index === 0 && (
-                                      <Badge className="ml-auto bg-blue-500/20 text-blue-700 dark:text-blue-300 border-blue-500/30">
-                                        Current
-                                      </Badge>
-                                    )}
-                                    {item.type === 'splitter' && index > 0 && item.connection === 'parent' && (
-                                      <Badge className="ml-auto bg-purple-500/20 text-purple-700 dark:text-purple-300 border-purple-500/30">
-                                        Level {index}
-                                      </Badge>
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-
-                            {/* Connection Summary */}
-                            <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                              <div className="flex items-center gap-2 text-sm">
-                                <Network className="h-4 w-4 text-blue-500" />
-                                <span className="font-medium">Connection Summary:</span>
-                                <span>
-                                  {(() => {
-                                    const splitterCount = fullPath.filter(item => item.type === 'splitter').length;
-                                    const oltCount = fullPath.filter(item => item.type === 'olt').length;
-                                    const levels = splitterCount - 1;
-
-                                    if (oltCount > 0) {
-                                      return `${splitterCount} splitter${splitterCount !== 1 ? 's' : ''} in ${levels} level${levels !== 1 ? 's' : ''} → Connected to OLT`;
-                                    } else {
-                                      return `No OLT connection found`;
-                                    }
-                                  })()}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Connection Details */}
-                          <div className="grid gap-4 md:grid-cols-2">
-                            {/* Current Splitter Details */}
-                            <div className="space-y-3">
-                              <h5 className="font-medium flex items-center gap-2">
-                                <Split className="h-4 w-4 text-blue-500" />
-                                Current Splitter
-                              </h5>
-                              <div className="space-y-2">
-                                <div className="flex justify-between">
-                                  <span className="text-sm text-gray-500">Splitter ID:</span>
-                                  <code className="text-sm font-mono">{selectedSplitter.splitterId}</code>
-                                </div>
-                                <div className="flex justify-between">
-                                  <span className="text-sm text-gray-500">Type:</span>
-                                  <span>{selectedSplitter.isMaster ? 'Master' : 'Slave'}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                  <span className="text-sm text-gray-500">Split Ratio:</span>
-                                  <span className="font-medium">{selectedSplitter.splitRatio}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                  <span className="text-sm text-gray-500">Ports:</span>
-                                  <span>{selectedSplitter.usedPorts}/{selectedSplitter.portCount} ({selectedSplitter.availablePorts} available)</span>
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Direct Connection Details */}
-                            <div className="space-y-3">
-                              <h5 className="font-medium flex items-center gap-2">
-                                <Globe className="h-4 w-4 text-green-500" />
-                                Direct Connection
-                              </h5>
-                              {selectedSplitter.connectedServiceBoard ? (
-                                <div className="space-y-2">
-                                  <div className="flex justify-between">
-                                    <span className="text-sm text-gray-500">Connected to:</span>
-                                    <span className="font-medium">OLT Service Board</span>
-                                  </div>
-                                  <div className="flex justify-between">
-                                    <span className="text-sm text-gray-500">OLT Name:</span>
-                                    <span>{selectedSplitter.connectedServiceBoard.oltName}</span>
-                                  </div>
-                                  <div className="flex justify-between">
-                                    <span className="text-sm text-gray-500">Service Port:</span>
-                                    <code className="text-sm font-mono">{selectedSplitter.connectedServiceBoard.boardPort}</code>
-                                  </div>
-                                </div>
-                              ) : selectedSplitter.masterSplitterId ? (
-                                <div className="space-y-2">
-                                  <div className="flex justify-between">
-                                    <span className="text-sm text-gray-500">Connected to:</span>
-                                    <span className="font-medium">Parent Splitter</span>
-                                  </div>
-                                  <div className="flex justify-between">
-                                    <span className="text-sm text-gray-500">Parent ID:</span>
-                                    <code className="text-sm font-mono">{selectedSplitter.masterSplitterId}</code>
-                                  </div>
-                                  {(() => {
-                                    const parent = splitters.find(s => s.splitterId === selectedSplitter.masterSplitterId);
-                                    return parent ? (
-                                      <>
-                                        <div className="flex justify-between">
-                                          <span className="text-sm text-gray-500">Parent Name:</span>
-                                          <span>{parent.name}</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                          <span className="text-sm text-gray-500">Parent Type:</span>
-                                          <Badge size="sm" variant="outline">
-                                            {parent.isMaster ? 'Master' : 'Slave'}
-                                          </Badge>
-                                        </div>
-                                      </>
-                                    ) : null;
-                                  })()}
-                                </div>
-                              ) : (
-                                <div className="text-gray-400 italic">No direct connection</div>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Ultimate OLT Information */}
-                          {rootOlt && (
-                            <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800/30">
-                              <h5 className="font-medium flex items-center gap-2 mb-3">
-                                <Server className="h-4 w-4 text-green-600" />
-                                Ultimate OLT Connection
-                              </h5>
-                              <div className="grid grid-cols-2 gap-4">
-                                <div className="space-y-1">
-                                  <div className="text-sm text-gray-500">OLT Name</div>
-                                  <div className="font-medium">{rootOlt.name}</div>
-                                </div>
-                                <div className="space-y-1">
-                                  <div className="text-sm text-gray-500">IP Address</div>
-                                  <code className="text-sm font-mono bg-black/10 dark:bg-white/10 px-2 py-1 rounded">
-                                    {rootOlt.ipAddress}
-                                  </code>
-                                </div>
-                                <div className="space-y-1 col-span-2">
-                                  <div className="text-sm text-gray-500">Connection Path</div>
-                                  <div className="text-sm font-mono bg-gray-100 dark:bg-gray-800 px-3 py-2 rounded">
-                                    {fullPath
-                                      .filter(item => item.type !== 'none')
-                                      .map(item => item.data.name)
-                                      .join(' → ')}
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                </div>
-              </div>
-
-              <Separator />
-
-              {/* Fiber and Location Information */}
-              <div className="grid gap-6 md:grid-cols-2">
-                {/* Upstream Fiber Information */}
-                <div className="space-y-4">
-                  <h4 className="font-semibold text-lg flex items-center gap-2">
-                    <Wifi className="h-5 w-5 text-pink-500" />
-                    Upstream Fiber
-                  </h4>
-                  <div className="space-y-3">
-                    <div className="space-y-2">
-                      <Label className="text-sm text-gray-500">Fiber Core Color</Label>
-                      <div className="flex items-center gap-3">
-                        <div
-                          className="w-6 h-6 rounded-full border-2 border-gray-300"
-                          style={{ backgroundColor: selectedSplitter.upstreamFiber.coreColor.toLowerCase() }}
-                        />
-                        <span className="font-medium text-lg">{selectedSplitter.upstreamFiber.coreColor}</span>
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label className="text-sm text-gray-500">Connected To</Label>
-                      <Badge className="capitalize">
-                        {selectedSplitter.upstreamFiber.connectedTo === 'service-board' ? 'OLT Service Board' :
-                          selectedSplitter.upstreamFiber.connectedTo === 'splitter' ? 'Parent Splitter' :
-                            'OLT'}
-                      </Badge>
-                    </div>
-                    {selectedSplitter.upstreamFiber.port && (
-                      <div className="space-y-2">
-                        <Label className="text-sm text-gray-500">Port Number</Label>
-                        <code className="text-sm bg-gray-100 dark:bg-gray-800 px-3 py-1.5 rounded block">
-                          {selectedSplitter.upstreamFiber.port}
-                        </code>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Location Information */}
-                <div className="space-y-4">
-                  <h4 className="font-semibold text-lg flex items-center gap-2">
-                    <MapPin className="h-5 w-5 text-red-500" />
-                    Location Information
-                  </h4>
-                  <div className="space-y-3">
-                    <div className="space-y-2">
-                      <Label className="text-sm text-gray-500">Site</Label>
-                      <div className="p-2 bg-gray-50 dark:bg-gray-900/50 rounded">
-                        {selectedSplitter.location.site || (
-                          <span className="text-gray-400 italic">No site specified</span>
-                        )}
-                      </div>
-                    </div>
-
-                    {(selectedSplitter.location.latitude || selectedSplitter.location.longitude) && (
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                          <Label className="text-xs text-gray-500">Latitude</Label>
-                          <div className="p-2 bg-gray-50 dark:bg-gray-900/50 rounded text-sm font-mono">
-                            {selectedSplitter.location.latitude?.toFixed(6)}
-                          </div>
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs text-gray-500">Longitude</Label>
-                          <div className="p-2 bg-gray-50 dark:bg-gray-900/50 rounded text-sm font-mono">
-                            {selectedSplitter.location.longitude?.toFixed(6)}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {selectedSplitter.location.description && (
-                      <div className="space-y-2">
-                        <Label className="text-sm text-gray-500">Description</Label>
-                        <div className="p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg">
-                          <p className="text-sm whitespace-pre-wrap">{selectedSplitter.location.description}</p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Notes */}
-              {selectedSplitter.notes && (
-                <>
-                  <Separator />
-                  <div className="space-y-2">
-                    <Label className="text-sm text-gray-500">Additional Notes</Label>
-                    <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-800/30">
-                      <p className="text-sm whitespace-pre-wrap">{selectedSplitter.notes}</p>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              <Separator />
-
-              {/* Metadata */}
-              <div className="text-sm text-gray-500 space-y-1">
-                <div className="flex justify-between">
-                  <span>Created:</span>
-                  <span>{formatDate(selectedSplitter.createdAt)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Last Updated:</span>
-                  <span>{formatDate(selectedSplitter.updatedAt)}</span>
-                </div>
-                {selectedSplitter.totalCustomers !== undefined && selectedSplitter.totalCustomers > 0 && (
-                  <div className="flex justify-between">
-                    <span>Total Customers:</span>
-                    <span className="font-medium text-green-600">{selectedSplitter.totalCustomers}</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Quick Actions */}
-              <div className="flex justify-end gap-2 pt-4">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setShowSplitterDetails(false);
-                    setSelectedSplitter(selectedSplitter);
-                    // Load edit form
-                    const ratioValue = parseInt(selectedSplitter.splitRatio.split(':')[1]) || 8;
-                    let parentSplitterId = "";
-                    if (selectedSplitter.masterSplitterId) {
-                      const parent = splitters.find(s => s.splitterId === selectedSplitter.masterSplitterId);
-                      if (parent) parentSplitterId = parent.id;
-                    }
-
-                    setSplitterForm({
-                      name: selectedSplitter.name,
-                      splitterId: selectedSplitter.splitterId,
-                      splitRatio: selectedSplitter.splitRatio as any,
-                      splitterType: selectedSplitter.splitterType as "PLC" | "FBT",
-                      portCount: selectedSplitter.portCount,
-                      usedPorts: selectedSplitter.usedPorts,
-                      availablePorts: selectedSplitter.availablePorts,
-                      location: {
-                        site: selectedSplitter.location.site || "",
-                        latitude: selectedSplitter.location.latitude ?? 0,
-                        longitude: selectedSplitter.location.longitude ?? 0,
-                        description: selectedSplitter.location.description || ""
-                      },
-                      upstreamFiber: {
-                        coreColor: selectedSplitter.upstreamFiber.coreColor,
-                        connectedTo: selectedSplitter.upstreamFiber.connectedTo,
-                        connectionId: selectedSplitter.upstreamFiber.connectionId || "",
-                        port: selectedSplitter.upstreamFiber.port || ""
-                      },
-                      isMaster: selectedSplitter.isMaster,
-                      masterSplitterId: parentSplitterId,
-                      connectedServiceBoard: selectedSplitter.connectedServiceBoard,
-                      status: selectedSplitter.status,
-                      notes: selectedSplitter.notes || "",
-                      ratio: ratioValue
-                    });
-
-                    fetchAllSplittersForHierarchy();
-                    if (selectedSplitter.isMaster && selectedSplitter.connectedServiceBoard?.oltId) {
-                      fetchAvailablePorts(selectedSplitter.connectedServiceBoard.oltId);
-                    }
-
-                    setShowAddSplitterDialog(true);
-                  }}
-                >
-                  <Edit2 className="h-4 w-4 mr-2" />
-                  Edit Splitter
-                </Button>
-
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    if (selectedSplitter.location.latitude && selectedSplitter.location.longitude) {
-                      setMapLocation({
-                        latitude: selectedSplitter.location.latitude,
-                        longitude: selectedSplitter.location.longitude,
-                        name: selectedSplitter.name,
-                        site: selectedSplitter.location.site || 'Splitter Location'
-                      })
-                      setShowMapDialog(true)
-                    } else {
-                      toast.error('No location coordinates available for this splitter')
-                    }
-                  }}
-                  disabled={!selectedSplitter.location.latitude || !selectedSplitter.location.longitude}
-                >
-                  <MapPin className="h-4 w-4 mr-2" />
-                  View on Map
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const connectionPath = getConnectionPath(selectedSplitter, allSplitters);
-                    const text = `
-Splitter Details - ${selectedSplitter.name} (${selectedSplitter.splitterId})
-
-Specifications:
-- Type: ${selectedSplitter.splitterType}
-- Ratio: ${selectedSplitter.splitRatio}
-- Status: ${selectedSplitter.status}
-- Role: ${selectedSplitter.isMaster ? 'Master' : 'Slave'}
-
-Ports: ${selectedSplitter.usedPorts}/${selectedSplitter.portCount} (${selectedSplitter.availablePorts} available)
-
-Connection Path:
-${connectionPath.join('\n→ ')}
-
-Location: ${selectedSplitter.location.site || 'Not specified'}
-${(selectedSplitter.location.latitude && selectedSplitter.location.longitude) ? `Coordinates: ${selectedSplitter.location.latitude.toFixed(6)}, ${selectedSplitter.location.longitude.toFixed(6)}` : ''}
-
-Updated: ${formatDate(selectedSplitter.updatedAt)}
-              `.trim();
-
-                    navigator.clipboard.writeText(text);
-                    toast.success("Splitter details copied to clipboard");
-                  }}
-                >
-                  <Copy className="h-4 w-4 mr-2" />
-                  Copy Details
-                </Button>
-              </div>
-            </div>
-          )}
-
-          <DialogFooter>
-            <Button onClick={() => setShowSplitterDetails(false)}>
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
+        {selectedSplitter && (
+          <DialogContent className="max-h-[94vh] max-w-5xl gap-0 overflow-y-auto p-0 z-[120] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl rounded-2xl">
+            <SplitterDetailsModern
+              splitter={selectedSplitter}
+              splitters={allSplitters}
+              olts={olts}
+              onEdit={() => openSplitterEditor(selectedSplitter)}
+              onMap={() => openSplitterMap(selectedSplitter)}
+              onCopy={() => copySplitterDetails(selectedSplitter)}
+              onClose={() => setShowSplitterDetails(false)}
+            />
+          </DialogContent>
+        )}
       </Dialog>
 
       {/* Update OLT Dialog */}
@@ -9728,6 +9251,39 @@ Updated: ${formatDate(selectedSplitter.updatedAt)}
               </div>
             </div>
 
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Assignment</Label>
+                <SearchableSelect
+                  options={[
+                    { value: "none", label: "Main ISP / Unassigned" },
+                    { value: "branch", label: "Branch or Sub-branch" },
+                    { value: "reseller", label: "Reseller" }
+                  ]}
+                  value={oltOwnerType}
+                  onValueChange={(value) => {
+                    setOltOwnerType(String(value) as "none" | "branch" | "reseller")
+                    setOltOwnerId("")
+                  }}
+                  placeholder="Choose assignment type"
+                />
+              </div>
+              {oltOwnerType !== "none" && (
+                <div className="space-y-2">
+                  <Label>{oltOwnerType === "branch" ? "Branch / Sub-branch" : "Reseller"}</Label>
+                  <SearchableSelect
+                    options={(oltOwnerType === "branch" ? oltBranches : oltResellers).map(owner => ({
+                      value: String(owner.id),
+                      label: `${owner.name} (${owner.code})`
+                    }))}
+                    value={oltOwnerId}
+                    onValueChange={(value) => setOltOwnerId(String(value))}
+                    placeholder={`Choose ${oltOwnerType}`}
+                  />
+                </div>
+              )}
+            </div>
+
             <Separator />
 
             <div>
@@ -9787,6 +9343,8 @@ Updated: ${formatDate(selectedSplitter.updatedAt)}
                   model: basicForm.model,
                   vendor: basicForm.vendor,
                   status: basicForm.status,
+                  branchId: oltOwnerType === "branch" && oltOwnerId ? Number(oltOwnerId) : null,
+                  resellerId: oltOwnerType === "reseller" && oltOwnerId ? Number(oltOwnerId) : null,
                   sshConfig: {
                     host: sshForm.host || basicForm.ipAddress,
                     port: sshForm.port,
@@ -9803,6 +9361,8 @@ Updated: ${formatDate(selectedSplitter.updatedAt)}
 
                 if (response.success) {
                   setShowAddDialog(false)
+                  setOltOwnerType("none")
+                  setOltOwnerId("")
                   toast.success("OLT added successfully")
                   // Refresh the list
                   await fetchOLTs(oltPagination.page)
@@ -9819,6 +9379,14 @@ Updated: ${formatDate(selectedSplitter.updatedAt)}
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {xtermModalOlt && (
+        <OLTTerminal
+          olt={xtermModalOlt}
+          isOpen={Boolean(xtermModalOlt)}
+          onClose={() => setXtermModalOlt(null)}
+        />
+      )}
 
     </div>
   )

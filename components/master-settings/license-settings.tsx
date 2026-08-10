@@ -87,7 +87,7 @@ export function LicenseSettings() {
 
   return (
     <div className="space-y-6">
-      <CardContainer title="License Information" description="Application license bound to this server hardware">
+      <CardContainer title="License Information" description="Tenant-specific license bound to this server hardware and ISP identity">
         <div className="space-y-4">
           <div className="flex items-center gap-3">
             <Badge variant={status?.active ? "default" : "destructive"}>
@@ -134,6 +134,7 @@ export function LicenseSettings() {
 
 export function LicenseGenerator({ onGenerated }: { onGenerated?: (license: GeneratedLicense) => void }) {
   const [form, setForm] = useState({
+    ispId: "",
     company: "",
     contact: "",
     hwid: "",
@@ -143,10 +144,17 @@ export function LicenseGenerator({ onGenerated }: { onGenerated?: (license: Gene
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    apiRequest<{ hwid: string }>("/license/hwid", { suppressToast: true })
-      .then((data) => setForm((prev) => ({ ...prev, hwid: data.hwid })))
+    apiRequest<{ hwid: string; ispId: number }>("/license/hwid", { suppressToast: true })
+      .then((data) => setForm((prev) => ({ ...prev, ispId: String(data.ispId), hwid: data.hwid })))
       .catch(() => {})
   }, [])
+
+  const selectTenant = async (ispId: string) => {
+    setForm(current => ({ ...current, ispId, hwid: "" }))
+    if (!/^\d+$/.test(ispId)) return
+    const data = await apiRequest<{ hwid: string; ispId: number }>(`/license/hwid?ispId=${encodeURIComponent(ispId)}`, { suppressToast: true })
+    setForm(current => ({ ...current, ispId: String(data.ispId), hwid: data.hwid }))
+  }
 
   const generate = async () => {
     setLoading(true)
@@ -168,10 +176,11 @@ export function LicenseGenerator({ onGenerated }: { onGenerated?: (license: Gene
     <CardContainer title="License Generator" description="Generate a hardware-bound JWT license">
       <div className="grid gap-4">
         <div className="grid gap-4 md:grid-cols-2">
+          <Field label="ISP Tenant ID" type="number" value={form.ispId} onChange={selectTenant} />
           <Field label="Company" value={form.company} onChange={(value) => setForm({ ...form, company: value })} />
           <Field label="Contact" value={form.contact} onChange={(value) => setForm({ ...form, contact: value })} />
           <Field label="Expire Date" type="date" value={form.expiresAt} onChange={(value) => setForm({ ...form, expiresAt: value })} />
-          <Field label="Hardware ID" value={form.hwid} onChange={(value) => setForm({ ...form, hwid: value })} />
+          <div className="space-y-2"><Label>Tenant Hardware ID</Label><Input value={form.hwid} readOnly className="font-mono text-xs"/><p className="text-xs text-muted-foreground">Generated deterministically from this server and the authenticated ISP. It cannot be manually changed.</p></div>
         </div>
         <Button onClick={generate} disabled={loading} className="w-fit">
           {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

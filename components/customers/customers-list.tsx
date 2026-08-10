@@ -1,7 +1,24 @@
 "use client"
 import React, { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { MoreHorizontal, ChevronDown, Check, User, FileText, Wifi, AlertTriangle, Ban, Loader2, Phone, MessageSquare, Send } from "lucide-react"
+import {
+  AlertTriangle,
+  Ban,
+  CalendarClock,
+  Check,
+  FileText,
+  Loader2,
+  MessageSquare,
+  MoreHorizontal,
+  Phone,
+  RefreshCw,
+  Search,
+  Send,
+  User,
+  UserCheck,
+  Users,
+  Wifi,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
@@ -204,6 +221,10 @@ export function CustomersList() {
   const [smsCustomer, setSmsCustomer] = useState<Customer | null>(null)
   const [smsMessage, setSmsMessage] = useState("")
   const [sendingSms, setSendingSms] = useState(false)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [statusFilter, setStatusFilter] = useState("all")
+  const [connectionFilter, setConnectionFilter] = useState("all")
+  const [referenceTime] = useState(() => Date.now())
 
   const handleOutboundCall = async (phoneNumber?: string) => {
     if (!voipEnabled) {
@@ -581,6 +602,40 @@ export function CustomersList() {
     fetchCustomers(1, newLimit)
   }
 
+  const normalizedSearch = searchQuery.trim().toLowerCase()
+  const visibleCustomers = customers.filter((customer) => {
+    const customerId = customer.id.toString()
+    const status = customer.status?.toLowerCase() || "unknown"
+    const connection = connectionStatuses[customerId]
+    const isOnline = connection?.radius === "online" || connection?.acs === "online"
+    const matchesSearch = !normalizedSearch || [
+      customer.customerUniqueId,
+      getCustomerFullName(customer),
+      customer.email,
+      customer.phoneNumber,
+      customer.secondaryPhone,
+      customer.connectionUsers?.[0]?.username,
+      customer.branch?.name,
+      customer.subscribedPkg?.packagePlanDetails?.planName,
+    ].some((value) => String(value || "").toLowerCase().includes(normalizedSearch))
+    const matchesStatus = statusFilter === "all" || status === statusFilter
+    const matchesConnection = connectionFilter === "all"
+      || (connectionFilter === "online" && isOnline)
+      || (connectionFilter === "offline" && !isOnline && !connection?.loading)
+
+    return matchesSearch && matchesStatus && matchesConnection
+  })
+
+  const activeOnPage = customers.filter((customer) => customer.status?.toLowerCase() === "active").length
+  const radiusOnlineOnPage = customers.filter((customer) => connectionStatuses[customer.id]?.radius === "online").length
+  const acsOnlineOnPage = customers.filter((customer) => connectionStatuses[customer.id]?.acs === "online").length
+  const expiringSoonOnPage = customers.filter((customer) => {
+    const planEnd = customer.customerSubscriptions?.[0]?.planEnd
+    if (!planEnd) return false
+    const remaining = new Date(planEnd).getTime() - referenceTime
+    return remaining >= 0 && remaining <= 7 * 24 * 60 * 60 * 1000
+  }).length
+
   if (loading) {
     return (
       <CardContainer title="Customers" description="All registered customers">
@@ -607,426 +662,494 @@ export function CustomersList() {
 
   return (
     <>
-    <ConfirmDialog
-      open={deleteDialogOpen}
-      onOpenChange={setDeleteDialogOpen}
-      title="Delete customer?"
-      description="This will revert the customer to a qualified lead. Customers with assigned hardware must return devices before deletion."
-      confirmLabel="Delete Customer"
-      cancelLabel="Cancel"
-      variant="destructive"
-      onConfirm={confirmDeleteCustomer}
-    />
-    <ConfirmDialog
-      open={bulkDeleteDialogOpen}
-      onOpenChange={setBulkDeleteDialogOpen}
-      title="Delete selected customers?"
-      description="Each selected customer will be reverted to a qualified lead. Any customer with assigned hardware will be rejected by the server until devices are returned."
-      confirmLabel="Delete Selected"
-      cancelLabel="Cancel"
-      variant="destructive"
-      onConfirm={confirmBulkDelete}
-    />
-    <CardContainer title="Customers" description="All registered customers">
-      <div className="rounded-md border">
-        <div className="relative w-full overflow-auto">
-          {customers.length === 0 ? (
-            <div className="text-center py-12">
-              <p className="text-muted-foreground">No customers found</p>
-              <Button variant="outline" size="sm" onClick={() => router.push('/customers/new')} className="mt-2">
-                Add New Customer
-              </Button>
-            </div>
-          ) : (
-            <>
-              <table className="w-full caption-bottom text-sm">
-                <thead className="[&_tr]:border-b">
-                  <tr className="border-b transition-colors hover:bg-muted/50">
-                    <th className="h-12 px-4 text-left align-middle font-medium">
-                      <div className="flex items-center space-x-2">
+      <ConfirmDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        title="Delete customer?"
+        description="This will revert the customer to a qualified lead. Customers with assigned hardware must return devices before deletion."
+        confirmLabel="Delete Customer"
+        cancelLabel="Cancel"
+        variant="destructive"
+        onConfirm={confirmDeleteCustomer}
+      />
+      <ConfirmDialog
+        open={bulkDeleteDialogOpen}
+        onOpenChange={setBulkDeleteDialogOpen}
+        title="Delete selected customers?"
+        description="Each selected customer will be reverted to a qualified lead. Any customer with assigned hardware will be rejected by the server until devices are returned."
+        confirmLabel="Delete Selected"
+        cancelLabel="Cancel"
+        variant="destructive"
+        onConfirm={confirmBulkDelete}
+      />
+      <CardContainer
+        title="Customer Directory"
+        description={`${pagination.total.toLocaleString()} registered subscriber accounts`}
+        className="customer-directory-card"
+        action={(
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fetchCustomers(pagination.page, pagination.limit)}
+            disabled={loading}
+          >
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Refresh
+          </Button>
+        )}
+      >
+        <div className="customer-directory-summary grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          {[
+            { label: "Total Customers", value: pagination.total, detail: "All registered accounts", icon: Users, tone: "violet" },
+            { label: "Active on Page", value: activeOnPage, detail: `${customers.length} records loaded`, icon: UserCheck, tone: "emerald" },
+            { label: "Radius Online", value: radiusOnlineOnPage, detail: "Live PPPoE sessions", icon: Wifi, tone: "blue" },
+            { label: "ACS Online", value: acsOnlineOnPage, detail: "Reachable managed devices", icon: Wifi, tone: "cyan" },
+            { label: "Expiring Soon", value: expiringSoonOnPage, detail: "Within the next 7 days", icon: CalendarClock, tone: "amber" },
+          ].map((metric) => {
+            const MetricIcon = metric.icon
+            return (
+              <div key={metric.label} className="customer-directory-stat">
+                <div className={`customer-directory-stat-icon is-${metric.tone}`}>
+                  <MetricIcon className="h-5 w-5" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-muted-foreground">{metric.label}</p>
+                  <p className="mt-0.5 text-2xl font-semibold tracking-tight">{metric.value.toLocaleString()}</p>
+                  <p className="mt-1 truncate text-[11px] text-muted-foreground">{metric.detail}</p>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        <div className="customer-directory-toolbar">
+          <div className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search by customer, ID, phone, username, branch, or plan..."
+              className="pl-9"
+            />
+          </div>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-full sm:w-[160px]">
+              <SelectValue placeholder="Account status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="active">Active</SelectItem>
+              <SelectItem value="inactive">Inactive</SelectItem>
+              <SelectItem value="suspended">Suspended</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={connectionFilter} onValueChange={setConnectionFilter}>
+            <SelectTrigger className="w-full sm:w-[170px]">
+              <SelectValue placeholder="Connection" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All connections</SelectItem>
+              <SelectItem value="online">Online</SelectItem>
+              <SelectItem value="offline">Offline</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="customer-directory-table rounded-xl border">
+          <div className="relative w-full overflow-auto">
+            {visibleCustomers.length === 0 ? (
+              <div className="text-center py-12">
+                <Users className="mx-auto mb-3 h-9 w-9 text-muted-foreground/60" />
+                <p className="font-medium">{customers.length === 0 ? "No customers found" : "No customers match these filters"}</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {customers.length === 0 ? "Add a customer to begin managing subscriber services." : "Try adjusting the search or status filters."}
+                </p>
+                {customers.length === 0 ? (
+                  <Button variant="outline" size="sm" onClick={() => router.push('/customers/new')} className="mt-3">
+                    Add New Customer
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => {
+                      setSearchQuery("")
+                      setStatusFilter("all")
+                      setConnectionFilter("all")
+                    }}
+                  >
+                    Clear filters
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <>
+                <table className="w-full caption-bottom text-sm border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-100 dark:border-slate-800 bg-indigo-50/50 dark:bg-indigo-950/30">
+                      <th className="w-[44px] py-3.5 pl-4 pr-1 text-left align-middle">
                         <Checkbox
-                          checked={selectedCustomers.length === customers.length}
+                          checked={selectedCustomers.length === customers.length && customers.length > 0}
                           onCheckedChange={toggleSelectAll}
                           aria-label="Select all"
                         />
-                        <span>Customer ID</span>
-                      </div>
-                    </th>
-                    <th className="h-12 px-4 text-left align-middle font-medium">Customer</th>
-                    <th className="h-12 px-4 text-left align-middle font-medium">Radius Username</th>
-                    <th className="h-12 px-4 text-left align-middle font-medium">Branch / Sub-branch</th>
-                    <th className="h-12 px-4 text-left align-middle font-medium">Plan</th>
-                    <th className="h-12 px-4 text-left align-middle font-medium">Status</th>
-                    <th className="h-12 px-4 text-left align-middle font-medium">Connection</th>
-                    <th className="h-12 px-4 text-left align-middle font-medium">Expiration</th>
-                    <th className="h-12 px-4 text-left align-middle font-medium"></th>
-                  </tr>
-                </thead>
-                <tbody className="[&_tr:last-child]:border-0">
-                  {customers.map((customer) => {
-                    const customerId = customer.id.toString()
-                    const fullName = getCustomerFullName(customer)
-                    const serviceDetail = customer.serviceDetails?.[0]
-                    const connectionType = serviceDetail?.connectionType
-                    const deviceModel = customer.devices?.[0]?.model
-                    const plan = customer.subscribedPkg
-                    const isTrial = customer.customerSubscriptions?.[0]?.isTrial
+                      </th>
+                      <th className="text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300 py-3.5 px-3 text-left">CUSTOMER ID</th>
+                      <th className="text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300 py-3.5 px-3 text-left">SUBSCRIBER</th>
+                      <th className="text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300 py-3.5 px-3 text-left">RADIUS USER</th>
+                      <th className="text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300 py-3.5 px-3 text-left">BRANCH</th>
+                      <th className="text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300 py-3.5 px-3 text-left">PLAN &amp; SPEED</th>
+                      <th className="text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300 py-3.5 px-3 text-left">STATUS</th>
+                      <th className="text-xs font-extrabold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 py-3.5 px-3 text-left">CONNECTION &amp; TELEMETRY</th>
+                      <th className="text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300 py-3.5 px-3 text-left">EXPIRATION</th>
+                      <th className="w-[50px] text-center text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300 py-3.5 px-3"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                    {visibleCustomers.map((customer) => {
+                      const customerId = customer.id.toString()
+                      const fullName = getCustomerFullName(customer)
+                      const serviceDetail = customer.serviceDetails?.[0]
+                      const connectionType = serviceDetail?.connectionType
+                      const deviceModel = customer.devices?.[0]?.model
+                      const plan = customer.subscribedPkg
+                      const isTrial = customer.customerSubscriptions?.[0]?.isTrial
 
-                    return (
-                      <tr
-                        key={customerId}
-                        className="border-b transition-colors hover:bg-muted/50 cursor-pointer"
-                        onClick={() => handleViewProfile(customerId)}
-                      >
-                        <td className="p-4 align-middle" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex items-center space-x-2">
+                      const radStatus = connectionStatuses[customerId]?.radius || 'offline'
+                      const acsStatus = connectionStatuses[customerId]?.acs || 'offline'
+                      const isRadOnline = radStatus === 'online'
+                      const isAcsOnline = acsStatus === 'online'
+
+                      const vlansSummary = serviceDetail?.vlanDetails && serviceDetail.vlanDetails.length > 0
+                        ? serviceDetail.vlanDetails.map(v => `${v.vlanId}: ${v.name || v.vlanType}`).join(" · ")
+                        : serviceDetail?.vlanId ? `VLAN ${serviceDetail.vlanId}` : null
+
+                      return (
+                        <tr
+                          key={customerId}
+                          className="transition-colors hover:bg-indigo-50/20 dark:hover:bg-indigo-950/10 cursor-pointer"
+                          onClick={() => handleViewProfile(customerId)}
+                        >
+                          <td className="py-3 pl-4 pr-1 align-middle" onClick={(e) => e.stopPropagation()}>
                             <Checkbox
                               checked={selectedCustomers.includes(customerId)}
                               onCheckedChange={() => toggleSelectCustomer(customerId)}
                               aria-label={`Select ${fullName}`}
                             />
-                            <span className="font-mono text-xs">{customer.customerUniqueId || `CUST-${customer.id.toString().padStart(3, '0')}`}</span>
-                          </div>
-                        </td>
-                        <td className="p-4 align-middle">
-                          <div className="flex items-center gap-3">
-                            <Avatar>
-                              {getCustomerProfilePictureUrl(customer) && (
-                                <AvatarImage src={getCustomerProfilePictureUrl(customer)} alt={fullName} />
-                              )}
-                              <AvatarFallback>{getCustomerInitials(customer)}</AvatarFallback>
-                            </Avatar>
+                          </td>
+                          <td className="py-3 px-3 align-middle">
+                            <span className="font-mono text-xs font-extrabold text-indigo-600 dark:text-indigo-400 hover:underline">
+                              {customer.customerUniqueId || `CUS-${customer.id.toString().padStart(4, '0')}`}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 align-middle">
+                            <div className="flex items-center gap-2.5">
+                              <Avatar className="h-8 w-8 shrink-0">
+                                {getCustomerProfilePictureUrl(customer) && (
+                                  <AvatarImage src={getCustomerProfilePictureUrl(customer)} alt={fullName} />
+                                )}
+                                <AvatarFallback className="text-[10px] font-extrabold bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                                  {getCustomerInitials(customer)}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div className="min-w-0">
+                                <div className="font-extrabold text-xs text-slate-900 dark:text-white truncate max-w-[180px]">{fullName}</div>
+                                <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-0.5">
+                                  <span className="truncate max-w-[140px]">{customer.email}</span>
+                                  {customer.phoneNumber && (
+                                    <>
+                                      <span>·</span>
+                                      <button
+                                        type="button"
+                                        className={`inline-flex items-center hover:text-indigo-600 font-mono ${!voipEnabled ? "cursor-not-allowed opacity-60" : ""}`}
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          handleOutboundCall(customer.phoneNumber)
+                                        }}
+                                      >
+                                        <Phone className="h-3 w-3 mr-0.5 inline" />
+                                        {customer.phoneNumber}
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-3 px-3 align-middle font-mono text-xs font-bold text-slate-800 dark:text-slate-200">
+                            {customer.connectionUsers?.[0]?.username || '—'}
+                          </td>
+                          <td className="py-3 px-3 align-middle text-xs font-bold text-slate-800 dark:text-slate-200">
+                            {customer.branch?.name || 'Main Branch'}
+                            {customer.subBranch?.name && (
+                              <span className="block text-[10px] font-medium text-muted-foreground">({customer.subBranch.name})</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 align-middle">
                             <div>
-                              <div className="font-medium">{fullName}</div>
-                              <div className="text-xs text-muted-foreground">{customer.email}</div>
-                              <button
-                                type="button"
-                                className={`text-xs text-muted-foreground hover:text-green-600 ${!voipEnabled ? "cursor-not-allowed opacity-50 hover:text-muted-foreground" : ""}`}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleOutboundCall(customer.phoneNumber)
-                                }}
-                              >
-                                <Phone className="inline h-3 w-3 mr-1" />
-                                {customer.phoneNumber}
-                              </button>
-                              {customer.secondaryPhone && (
-                                <button
-                                  type="button"
-                                  className={`block text-xs text-muted-foreground hover:text-green-600 ${!voipEnabled ? "cursor-not-allowed opacity-50 hover:text-muted-foreground" : ""}`}
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    handleOutboundCall(customer.secondaryPhone)
-                                  }}
-                                >
-                                  <Phone className="inline h-3 w-3 mr-1" />
-                                  {customer.secondaryPhone}
-                                </button>
-                              )}
-                              <div className="text-[10px] text-muted-foreground mt-1 font-semibold">
-                                Registered: {formatDate(customer.convertedAt || customer.createdAt)}
+                              <div className="font-extrabold text-xs text-slate-900 dark:text-white">{plan?.packagePlanDetails?.planName ?? 'N/A'}</div>
+                              <div className="text-[11px] text-muted-foreground font-medium mt-0.5">
+                                {plan?.packagePlanDetails?.downSpeed ?? 75} Mbps · {plan?.price ? formatPrice(plan.price) : 'N/A'}
                               </div>
                             </div>
-                          </div>
-                        </td>
-                        <td className="p-4 align-middle font-mono text-xs">
-                          {customer.connectionUsers?.[0]?.username || 'N/A'}
-                        </td>
-                        <td className="p-4 align-middle">
-                          <div className="text-sm font-medium">{customer.branch?.name || 'N/A'}</div>
-                          {customer.subBranch?.name && (
-                            <div className="text-xs text-muted-foreground">
-                              Sub-branch: {customer.subBranch.name}
-                            </div>
-                          )}
-                        </td>
-                        <td className="p-4 align-middle">
-                          <div>
-                            <div className="font-medium">{plan?.packagePlanDetails?.planName ?? 'N/A'}</div>
-                            <div className="text-xs text-muted-foreground">
-                              {plan?.packageDuration ?? ''} • {plan?.price ? formatPrice(plan.price) : 'N/A'}
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              {plan?.packagePlanDetails?.downSpeed ?? 0} Mbps
-                            </div>
-                          </div>
-                        </td>
-                        <td className="p-4 align-middle">
-                          <div className="flex flex-col gap-1">
-                            {getStatusBadge(customer.status)}
-                            {customer.isFree && (
-                              <Badge variant="outline" className="bg-purple-500/10 text-purple-500 border-purple-500/20 text-xs font-bold">
-                                Free Customer
-                              </Badge>
-                            )}
-                            {isTrial && (
-                              <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20 text-xs">
-                                Trial Active
-                              </Badge>
-                            )}
-                          </div>
-                        </td>
-                        <td className="p-4 align-middle">
-                          <div className="flex flex-col gap-1.5">
-                            <div className="flex items-center gap-2">
-                              {getConnectionTypeBadge(connectionType)}
-                              {deviceModel && (
-                                <span className="text-xs text-muted-foreground">
-                                  ({deviceModel})
-                                </span>
+                          </td>
+                          <td className="py-3 px-3 align-middle">
+                            <div className="flex flex-wrap items-center gap-1">
+                              {getStatusBadge(customer.status)}
+                              {customer.isFree && (
+                                <Badge variant="outline" className="bg-purple-500/10 text-purple-500 border-purple-500/20 text-[9px] font-bold px-1.5 py-0">
+                                  Free
+                                </Badge>
                               )}
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Radius:</span>
-                              {connectionStatuses[customerId]?.loading ? (
-                                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-                              ) : (
-                                <Badge
-                                  variant="outline"
-                                  className={
-                                    connectionStatuses[customerId]?.radius === 'online'
-                                      ? 'bg-green-500/10 text-green-500 border-green-500/20 text-[10px] px-1.5 py-0'
-                                      : 'bg-red-500/10 text-red-500 border-red-500/20 text-[10px] px-1.5 py-0'
-                                  }
-                                >
-                                  {connectionStatuses[customerId]?.radius || 'offline'}
+                              {isTrial && (
+                                <Badge variant="outline" className="bg-sky-500/10 text-sky-500 border-sky-500/20 text-[9px] font-bold px-1.5 py-0">
+                                  Trial
                                 </Badge>
                               )}
                             </div>
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">ACS:</span>
-                              {connectionStatuses[customerId]?.loading ? (
-                                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-                              ) : (
-                                <Badge
-                                  variant="outline"
-                                  className={
-                                    connectionStatuses[customerId]?.acs === 'online'
-                                      ? 'bg-green-500/10 text-green-500 border-green-500/20 text-[10px] px-1.5 py-0'
-                                      : 'bg-red-500/10 text-red-500 border-red-500/20 text-[10px] px-1.5 py-0'
-                                  }
-                                >
-                                  {connectionStatuses[customerId]?.acs || 'offline'}
-                                </Badge>
-                              )}
-                            </div>
-                            {/* VLAN details: show actual VLAN IDs with names if available */}
-                            {serviceDetail?.vlanDetails && serviceDetail.vlanDetails.length > 0 ? (
-                              <div className="text-xs text-muted-foreground space-y-0.5 mt-1">
-                                {serviceDetail.vlanDetails.map(vlan => (
-                                  <div key={vlan.id}>
-                                    VLAN {vlan.vlanId}: {vlan.name}
-                                  </div>
-                                ))}
+                          </td>
+                          <td className="py-3 px-3 align-middle">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-1.5">
+                                {getConnectionTypeBadge(connectionType)}
+                                {deviceModel && (
+                                  <span className="text-[11px] font-mono text-muted-foreground font-semibold">
+                                    ({deviceModel})
+                                  </span>
+                                )}
                               </div>
-                            ) : serviceDetail?.vlanId ? (
-                              <div className="text-xs text-muted-foreground mt-1">
-                                VLAN: {serviceDetail.vlanId}
+                              <div className="flex items-center gap-2 text-[10px] font-mono">
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[9px] text-muted-foreground font-sans font-bold uppercase">RADIUS:</span>
+                                  {connectionStatuses[customerId]?.loading ? (
+                                    <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                                  ) : (
+                                    <span className={`font-bold ${isRadOnline ? "text-emerald-600 dark:text-emerald-400" : "text-rose-500"}`}>
+                                      ● {radStatus}
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-slate-300 dark:text-slate-700">|</span>
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[9px] text-muted-foreground font-sans font-bold uppercase">ACS:</span>
+                                  {connectionStatuses[customerId]?.loading ? (
+                                    <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                                  ) : (
+                                    <span className={`font-bold ${isAcsOnline ? "text-emerald-600 dark:text-emerald-400" : "text-rose-500"}`}>
+                                      ● {acsStatus}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
-                            ) : null}
-                          </div>
-                        </td>
-                        <td className="p-4 align-middle">
-                          {customer.customerSubscriptions?.[0]?.planEnd ? (
-                            <div className="flex flex-col gap-1">
-                              <span className="font-medium text-xs">
-                                {formatDate(customer.customerSubscriptions[0].planEnd)}
-                              </span>
-                              {new Date(customer.customerSubscriptions[0].planEnd).getTime() < Date.now() ? (
-                                <Badge variant="outline" className="bg-red-500/10 text-red-500 border-red-500/20 text-[10px] w-fit px-1.5 py-0">
-                                  Expired
-                                </Badge>
-                              ) : (
-                                <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/20 text-[10px] w-fit px-1.5 py-0">
-                                  Active
-                                </Badge>
+                              {vlansSummary && (
+                                <div className="text-[10px] font-mono text-muted-foreground truncate max-w-[200px]" title={vlansSummary}>
+                                  {vlansSummary}
+                                </div>
                               )}
                             </div>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">N/A</span>
-                          )}
-                        </td>
-                        <td className="p-4 align-middle" onClick={(e) => e.stopPropagation()}>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" className="h-8 w-8 p-0">
-                                <span className="sr-only">Open menu</span>
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                              <DropdownMenuItem onClick={() => handleViewProfile(customerId)}>
-                                <User className="mr-2 h-4 w-4" /> View Profile
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => handleViewInvoices(customerId)}>
-                                <FileText className="mr-2 h-4 w-4" /> View Invoices
-                              </DropdownMenuItem>
-                               <DropdownMenuItem onClick={() => handleCheckConnection(customerId)}>
-                                <Wifi className="mr-2 h-4 w-4" /> Check Connection
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => openSmsDialog(customer)}>
-                                <MessageSquare className="mr-2 h-4 w-4" /> Send SMS
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuSub>
-                                <DropdownMenuSubTrigger>
-                                  <User className="mr-2 h-4 w-4" /> Change Status
-                                </DropdownMenuSubTrigger>
-                                <DropdownMenuSubContent>
-                                  <DropdownMenuItem onClick={() => handleStatusChange(customerId, 'active')}>
+                          </td>
+                          <td className="py-3 px-3 align-middle">
+                            {customer.customerSubscriptions?.[0]?.planEnd ? (
+                              <div className="space-y-0.5">
+                                <div className="font-extrabold text-xs text-slate-800 dark:text-slate-200">
+                                  {formatDate(customer.customerSubscriptions[0].planEnd)}
+                                </div>
+                                {new Date(customer.customerSubscriptions[0].planEnd).getTime() < referenceTime ? (
+                                  <Badge variant="outline" className="bg-rose-500/10 text-rose-500 border-rose-500/20 text-[9px] font-bold px-1.5 py-0">
+                                    Expired
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20 text-[9px] font-bold px-1.5 py-0">
                                     Active
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => handleStatusChange(customerId, 'inactive')}>
-                                    Inactive
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => handleStatusChange(customerId, 'suspended')}>
-                                    Suspended
-                                  </DropdownMenuItem>
-                                </DropdownMenuSubContent>
-                              </DropdownMenuSub>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem className="text-red-600" onClick={() => handleDeleteCustomer(customerId)}>
-                                Delete Customer
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+                                  </Badge>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </td>
+                          <td className="p-4 align-middle" onClick={(e) => e.stopPropagation()}>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" className="h-8 w-8 p-0">
+                                  <span className="sr-only">Open menu</span>
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                <DropdownMenuItem onClick={() => handleViewProfile(customerId)}>
+                                  <User className="mr-2 h-4 w-4" /> View Profile
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleViewInvoices(customerId)}>
+                                  <FileText className="mr-2 h-4 w-4" /> View Invoices
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleCheckConnection(customerId)}>
+                                  <Wifi className="mr-2 h-4 w-4" /> Check Connection
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => openSmsDialog(customer)}>
+                                  <MessageSquare className="mr-2 h-4 w-4" /> Send SMS
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuSub>
+                                  <DropdownMenuSubTrigger>
+                                    <User className="mr-2 h-4 w-4" /> Change Status
+                                  </DropdownMenuSubTrigger>
+                                  <DropdownMenuSubContent>
+                                    <DropdownMenuItem onClick={() => handleStatusChange(customerId, 'active')}>
+                                      Active
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => handleStatusChange(customerId, 'inactive')}>
+                                      Inactive
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => handleStatusChange(customerId, 'suspended')}>
+                                      Suspended
+                                    </DropdownMenuItem>
+                                  </DropdownMenuSubContent>
+                                </DropdownMenuSub>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem className="text-red-600" onClick={() => handleDeleteCustomer(customerId)}>
+                                  Delete Customer
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
 
-              {/* Pagination */}
-              <div className="flex items-center justify-between px-4 py-3 border-t">
-                <div className="text-sm text-muted-foreground">
-                  Showing {(pagination.page - 1) * pagination.limit + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} customers
-                </div>
-                <div className="flex items-center space-x-2">
+                {/* Pagination */}
+                <div className="flex items-center justify-between px-4 py-3 border-t">
+                  <div className="text-sm text-muted-foreground">
+                    Showing {(pagination.page - 1) * pagination.limit + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} customers
+                  </div>
                   <div className="flex items-center space-x-2">
-                    <span className="text-sm text-muted-foreground">Rows per page:</span>
-                    <select
-                      className="h-8 rounded-md border border-input bg-background px-2 py-1 text-sm"
-                      value={pagination.limit}
-                      onChange={(e) => handleLimitChange(Number(e.target.value))}
-                    >
-                      {[5, 10, 25, 50, 100].map(limit => (
-                        <option key={limit} value={limit}>{limit}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="flex items-center space-x-1">
-                    <Button variant="outline" size="sm" onClick={() => handlePageChange(pagination.page - 1)} disabled={pagination.page === 1}>
-                      Previous
-                    </Button>
-                    <div className="flex items-center space-x-1">
-                      {Array.from({ length: pagination.totalPages }, (_, i) => i + 1)
-                        .filter(page => Math.abs(page - pagination.page) <= 2 || page === 1 || page === pagination.totalPages)
-                        .map((page, idx, arr) => (
-                          <React.Fragment key={page}>
-                            {idx > 0 && arr[idx - 1] !== page - 1 && <span className="px-2">…</span>}
-                            <Button
-                              variant={pagination.page === page ? "default" : "outline"}
-                              size="sm"
-                              onClick={() => handlePageChange(page)}
-                            >
-                              {page}
-                            </Button>
-                          </React.Fragment>
+                    <div className="flex items-center space-x-2">
+                      <span className="text-sm text-muted-foreground">Rows per page:</span>
+                      <select
+                        className="h-8 rounded-md border border-input bg-background px-2 py-1 text-sm"
+                        value={pagination.limit}
+                        onChange={(e) => handleLimitChange(Number(e.target.value))}
+                      >
+                        {[5, 10, 25, 50, 100].map(limit => (
+                          <option key={limit} value={limit}>{limit}</option>
                         ))}
+                      </select>
                     </div>
-                    <Button variant="outline" size="sm" onClick={() => handlePageChange(pagination.page + 1)} disabled={pagination.page >= pagination.totalPages}>
-                      Next
-                    </Button>
+                    <div className="flex items-center space-x-1">
+                      <Button variant="outline" size="sm" onClick={() => handlePageChange(pagination.page - 1)} disabled={pagination.page === 1}>
+                        Previous
+                      </Button>
+                      <div className="flex items-center space-x-1">
+                        {Array.from({ length: pagination.totalPages }, (_, i) => i + 1)
+                          .filter(page => Math.abs(page - pagination.page) <= 2 || page === 1 || page === pagination.totalPages)
+                          .map((page, idx, arr) => (
+                            <React.Fragment key={page}>
+                              {idx > 0 && arr[idx - 1] !== page - 1 && <span className="px-2">…</span>}
+                              <Button
+                                variant={pagination.page === page ? "default" : "outline"}
+                                size="sm"
+                                onClick={() => handlePageChange(page)}
+                              >
+                                {page}
+                              </Button>
+                            </React.Fragment>
+                          ))}
+                      </div>
+                      <Button variant="outline" size="sm" onClick={() => handlePageChange(pagination.page + 1)} disabled={pagination.page >= pagination.totalPages}>
+                        Next
+                      </Button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Bulk Actions */}
-      {selectedCustomers.length > 0 && (
-        <div className="mt-4 flex items-center justify-between rounded-lg border p-4">
-          <span className="text-sm text-muted-foreground">
-            <span className="font-medium">{selectedCustomers.length}</span> customers selected
-          </span>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm">Bulk Actions</Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => toast.loading(`Exporting ${selectedCustomers.length} customers...`)}>
-                Export Selected
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => toast.loading(`Sending emails...`)}>
-                Send Email
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                className="text-red-600"
-                onClick={() => setBulkDeleteDialogOpen(true)}
-              >
-                Delete Selected
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      )}
-
-      {/* Manual SMS Dialog */}
-      <Dialog open={!!smsCustomer} onOpenChange={(open) => !open && setSmsCustomer(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Send SMS</DialogTitle>
-            <DialogDescription>
-              Send a manual SMS to {smsCustomer ? `${smsCustomer.firstName} ${smsCustomer.lastName}` : "customer"}.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>SMS Provider</Label>
-              <Select value={selectedSmsProvider} onValueChange={setSelectedSmsProvider}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select provider" />
-                </SelectTrigger>
-                <SelectContent>
-                  {smsProviders.length > 0 ? (
-                    smsProviders.map((provider) => (
-                      <SelectItem key={String(provider.service?.code || provider.id)} value={String(provider.service?.code || "")}>
-                        {provider.service?.name || provider.service?.code}
-                      </SelectItem>
-                    ))
-                  ) : (
-                    <>
-                      <SelectItem value="AAKASHSMS">Aakash SMS</SelectItem>
-                      <SelectItem value="SPARROWSMS">Sparrow SMS</SelectItem>
-                    </>
-                  )}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Phone</Label>
-              <Input value={smsCustomer?.phoneNumber || ""} readOnly />
-            </div>
-            <div className="space-y-2">
-              <Label>Message</Label>
-              <Textarea value={smsMessage} onChange={(event) => setSmsMessage(event.target.value)} rows={5} />
-            </div>
+              </>
+            )}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSmsCustomer(null)}>Cancel</Button>
-            <Button onClick={sendManualSms} disabled={sendingSms}>
-              <Send className="mr-2 h-4 w-4" />
-              {sendingSms ? "Sending..." : "Send SMS"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </CardContainer>
+        </div>
+
+        {/* Bulk Actions */}
+        {selectedCustomers.length > 0 && (
+          <div className="mt-4 flex items-center justify-between rounded-lg border p-4">
+            <span className="text-sm text-muted-foreground">
+              <span className="font-medium">{selectedCustomers.length}</span> customers selected
+            </span>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm">Bulk Actions</Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => toast.loading(`Exporting ${selectedCustomers.length} customers...`)}>
+                  Export Selected
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => toast.loading(`Sending emails...`)}>
+                  Send Email
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="text-red-600"
+                  onClick={() => setBulkDeleteDialogOpen(true)}
+                >
+                  Delete Selected
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
+
+        {/* Manual SMS Dialog */}
+        <Dialog open={!!smsCustomer} onOpenChange={(open) => !open && setSmsCustomer(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Send SMS</DialogTitle>
+              <DialogDescription>
+                Send a manual SMS to {smsCustomer ? `${smsCustomer.firstName} ${smsCustomer.lastName}` : "customer"}.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>SMS Provider</Label>
+                <Select value={selectedSmsProvider} onValueChange={setSelectedSmsProvider}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select provider" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {smsProviders.length > 0 ? (
+                      smsProviders.map((provider) => (
+                        <SelectItem key={String(provider.service?.code || provider.id)} value={String(provider.service?.code || "")}>
+                          {provider.service?.name || provider.service?.code}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <>
+                        <SelectItem value="AAKASHSMS">Aakash SMS</SelectItem>
+                        <SelectItem value="SPARROWSMS">Sparrow SMS</SelectItem>
+                      </>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Phone</Label>
+                <Input value={smsCustomer?.phoneNumber || ""} readOnly />
+              </div>
+              <div className="space-y-2">
+                <Label>Message</Label>
+                <Textarea value={smsMessage} onChange={(event) => setSmsMessage(event.target.value)} rows={5} />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setSmsCustomer(null)}>Cancel</Button>
+              <Button onClick={sendManualSms} disabled={sendingSms}>
+                <Send className="mr-2 h-4 w-4" />
+                {sendingSms ? "Sending..." : "Send SMS"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </CardContainer>
     </>
   )
 }

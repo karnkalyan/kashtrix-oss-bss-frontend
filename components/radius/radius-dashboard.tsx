@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Activity, Database, Eye, Loader2, RadioTower, RefreshCw, Search, Send, Shield, Users } from "lucide-react"
+import { Activity, Database, Eye, Loader2, Pencil, Plus, RadioTower, RefreshCw, Search, Send, Shield, Trash2, Users } from "lucide-react"
 import { ServicesAPI } from "@/lib/api/service"
 import { CardContainer } from "@/components/ui/card-container"
 import { Button } from "@/components/ui/button"
@@ -75,12 +75,19 @@ const radiusTables = [
 function RawRadiusTable({ table, search }: { table: string; search: string }) {
   const [rows, setRows] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
+  const [ispId, setIspId] = useState<number | null>(null)
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [editingRow, setEditingRow] = useState<any | null>(null)
+  const [jsonValue, setJsonValue] = useState("{}")
+  const [saving, setSaving] = useState(false)
+  const editable = ["radcheck", "radreply", "radusergroup", "radgroupreply", "radgroupcheck", "nas"].includes(table)
 
   const fetchRows = async () => {
     setLoading(true)
     try {
       const response = await ServicesAPI.getRadiusTable(table, ["radacct", "radpostauth", "nasreload"].includes(table) ? 1000 : 2000, 0)
       setRows(response.data?.rows || [])
+      setIspId(response.data?.ispId ?? null)
     } catch (error: any) {
       toast.error(error.message || `Failed to load ${table}`)
     } finally {
@@ -108,20 +115,67 @@ function RawRadiusTable({ table, search }: { table: string; search: string }) {
     return Array.from(keys).slice(0, 9)
   }, [filteredRows])
 
+  const openEditor = (row?: any) => {
+    setEditingRow(row || null)
+    const clean = row ? Object.fromEntries(Object.entries(row).filter(([key]) => !["id", "ID", "ispId", "ispid", "isp_id", "createdAt", "updatedAt"].includes(key))) : {}
+    setJsonValue(JSON.stringify(clean, null, 2))
+    setEditorOpen(true)
+  }
+
+  const saveRow = async () => {
+    let payload: Record<string, any>
+    try {
+      payload = JSON.parse(jsonValue)
+      if (!payload || Array.isArray(payload) || typeof payload !== "object") throw new Error()
+    } catch {
+      toast.error("Enter a valid JSON object")
+      return
+    }
+    setSaving(true)
+    try {
+      const id = editingRow?.id ?? editingRow?.ID
+      if (editingRow) await ServicesAPI.updateRadiusTableRow(table, id, payload)
+      else await ServicesAPI.createRadiusTableRow(table, payload)
+      toast.success(`${table} record ${editingRow ? "updated" : "created"}`)
+      setEditorOpen(false)
+      await fetchRows()
+    } catch (error: any) {
+      toast.error(error.message || `Failed to save ${table} record`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const deleteRow = async (row: any) => {
+    const id = row?.id ?? row?.ID
+    if (id === undefined || !confirm(`Delete ${table} record #${id} for ISP ${ispId}?`)) return
+    try {
+      await ServicesAPI.deleteRadiusTableRow(table, id)
+      toast.success(`${table} record deleted`)
+      await fetchRows()
+    } catch (error: any) {
+      toast.error(error.message || `Failed to delete ${table} record`)
+    }
+  }
+
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <span>{filteredRows.length} rows</span>
+      <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+        <div className="flex items-center gap-2"><span>{filteredRows.length} rows</span><Badge variant="outline">ISP {ispId ?? "-"} only</Badge></div>
+        <div className="flex gap-2">
+        {editable && <Button size="sm" onClick={() => openEditor()}><Plus className="mr-2 h-3.5 w-3.5" />Add row</Button>}
         <Button variant="outline" size="sm" onClick={fetchRows} disabled={loading}>
           {loading ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-2 h-3.5 w-3.5" />}
           Refresh
         </Button>
+        </div>
       </div>
       <div className="max-h-[520px] overflow-auto rounded-lg border">
         <Table>
           <TableHeader>
             <TableRow>
               {columns.map((column) => <TableHead key={column} className="whitespace-nowrap">{column}</TableHead>)}
+              {editable && <TableHead className="w-[100px]">Actions</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -143,12 +197,20 @@ function RawRadiusTable({ table, search }: { table: string; search: string }) {
                       {String(row?.[column] ?? "") || "-"}
                     </TableCell>
                   ))}
+                  {editable && <TableCell><div className="flex gap-1"><Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditor(row)}><Pencil className="h-3.5 w-3.5" /></Button><Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => deleteRow(row)}><Trash2 className="h-3.5 w-3.5" /></Button></div></TableCell>}
                 </TableRow>
               ))
             )}
           </TableBody>
         </Table>
       </div>
+      <Dialog open={editorOpen} onOpenChange={setEditorOpen}>
+        <DialogContent className="sm:max-w-[680px]">
+          <DialogHeader><DialogTitle>{editingRow ? "Edit" : "Add"} {table} record</DialogTitle><DialogDescription>The backend fixes ISP ID to {ispId ?? "the current tenant"}; it cannot be changed here.</DialogDescription></DialogHeader>
+          <div className="space-y-2"><Label>Record fields (JSON)</Label><Textarea className="min-h-[300px] font-mono text-xs" value={jsonValue} onChange={(event) => setJsonValue(event.target.value)} /></div>
+          <DialogFooter><Button variant="outline" onClick={() => setEditorOpen(false)}>Cancel</Button><Button onClick={saveRow} disabled={saving}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Save</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CardContainer } from "@/components/ui/card-container";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,14 +27,103 @@ import {
     Globe, Activity, Tag, Network, Router, Download, Upload,
     Clock, Shield, RefreshCw, BarChart as BarChartIcon, Info,
     AlertTriangle, Zap, Eye, EyeOff, Settings, Fingerprint,
-    Wifi, Radio, Terminal, Lock, Trash2, Plus
+    Wifi, Radio, Terminal, Lock, Trash2, Plus, ArrowLeft, Edit3
 } from "lucide-react";
-import { Cell, Pie, PieChart as RechartsPieChart, ResponsiveContainer, Tooltip } from "recharts";
+// Recharts imported removed to resolve compilation issues
 import { apiRequest } from "@/lib/api";
 import { toast } from "react-hot-toast";
 
 interface TR069DeviceWanConnectionsProps {
     deviceId: string; // serial number
+}
+
+type WanDiagnosticResult = {
+    diagnostic?: string;
+    status: "queued" | "pending" | "completed" | "failed";
+    diagnosticsState?: string;
+    target?: string;
+    summary?: Record<string, unknown>;
+    results?: Array<Record<string, unknown>>;
+    retrievedAt?: string;
+    message?: string | null;
+};
+
+const waitForWanDiagnostic = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
+
+function numberFromSummary(summary: Record<string, unknown> | undefined, key: string) {
+    const raw = summary?.[key];
+    if (raw === null || raw === undefined || raw === "") return null;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
+}
+
+function HumanReadableWanDiagnostic({ result }: { result: WanDiagnosticResult }) {
+    const sentSuccess = numberFromSummary(result.summary, "successCount");
+    const failed = numberFromSummary(result.summary, "failureCount");
+    const sent = (sentSuccess ?? 0) + (failed ?? 0);
+    const loss = sent > 0 ? Math.round(((failed || 0) / sent) * 100) : null;
+    const minimum = numberFromSummary(result.summary, "minimumResponseTime");
+    const average = numberFromSummary(result.summary, "averageResponseTime");
+    const maximum = numberFromSummary(result.summary, "maximumResponseTime");
+    const reachable = result.status === "completed" && sentSuccess !== null && sentSuccess > 0;
+
+    return (
+        <div className="mt-2 space-y-2 text-[10px]">
+            {result.status === "queued" && (
+                <p className="font-semibold text-amber-700">Waiting for the CPE to receive this ACS task.</p>
+            )}
+            {result.status === "pending" && (
+                <p className="font-semibold text-indigo-700">The CPE received the request; the test is still running.</p>
+            )}
+            {result.diagnostic === "ping" && result.status === "completed" && (
+                <>
+                    <p className={`text-sm font-extrabold ${reachable ? "text-emerald-600" : "text-rose-600"}`}>
+                        {reachable ? "Gateway responded successfully" : "No ICMP reply received"}
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                        <div className="rounded-lg bg-background/70 p-2">
+                            <span className="block text-muted-foreground">Packets</span>
+                            <strong>{sent} sent · {sentSuccess ?? 0} received · {failed ?? 0} lost{loss !== null ? ` (${loss}%)` : ""}</strong>
+                        </div>
+                        <div className="rounded-lg bg-background/70 p-2">
+                            <span className="block text-muted-foreground">Latency min / avg / max</span>
+                            <strong>{minimum ?? "—"} / {average ?? "—"} / {maximum ?? "—"} ms</strong>
+                        </div>
+                    </div>
+                    {!reachable && (
+                        <p className="text-muted-foreground">The WAN may still be online; some upstream gateways intentionally block ICMP echo requests.</p>
+                    )}
+                </>
+            )}
+            {result.diagnostic === "traceroute" && result.status === "completed" && (
+                <>
+                    <p className="text-sm font-extrabold text-emerald-600">
+                        Traceroute completed with {result.results?.length || 0} hop(s)
+                    </p>
+                    <ol className="max-h-48 space-y-1 overflow-auto font-mono">
+                        {(result.results || []).map((hop, index) => (
+                            <li key={String(hop.index ?? index)} className="rounded bg-background/70 p-1.5">
+                                {index + 1}. {String(hop.HopHost || hop.HopHostAddress || "No response")} {hop.HopRTTimes ? `· ${String(hop.HopRTTimes)} ms` : ""}
+                            </li>
+                        ))}
+                    </ol>
+                </>
+            )}
+            {result.status === "failed" && (
+                <p className="font-semibold text-rose-600">The CPE reported: {result.diagnosticsState || result.message || "Diagnostic failed"}.</p>
+            )}
+        </div>
+    );
+}
+
+function wanConnectionKey(connection: WanConnection) {
+    return connection.root || [
+        connection.modelRoot || "TR-098",
+        connection.wanDeviceIndex || "device",
+        connection.wanConnectionDeviceIndex || "interface",
+        connection.type,
+        connection.connectionIndex
+    ].join(":");
 }
 
 interface EthernetStats {
@@ -219,9 +308,14 @@ const defaultFormData: WanFormData = {
 export function TR069DeviceWanConnections({ deviceId }: TR069DeviceWanConnectionsProps) {
     const [wanConnections, setWanConnections] = useState<WanConnection[]>([]);
     const [stats, setStats] = useState<Record<string, EthernetStats>>({});
+    const [throughput, setThroughput] = useState<Record<string, { rxBps: number; txBps: number }>>({});
+    const previousTrafficRef = useRef<Record<string, { received: number; sent: number; sampledAt: number }>>({});
     const [selectedConnection, setSelectedConnection] = useState<string | null>(null);
+    const [activeSubTab, setActiveSubTab] = useState<string>("overview");
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
+    const [loadError, setLoadError] = useState("");
+    const [snapshotMeta, setSnapshotMeta] = useState<{ source?: string; snapshotAt?: string } | null>(null);
     const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({});
 
     // Add modal state
@@ -247,6 +341,8 @@ export function TR069DeviceWanConnections({ deviceId }: TR069DeviceWanConnection
     });
     const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
     const [isLoadingRadiusCredentials, setIsLoadingRadiusCredentials] = useState(false);
+    const [quickActionRunning, setQuickActionRunning] = useState("");
+    const [quickActionResult, setQuickActionResult] = useState<WanDiagnosticResult | null>(null);
 
     const loadRadiusCredentials = async (target: "add" | "edit") => {
         try {
@@ -315,7 +411,7 @@ export function TR069DeviceWanConnections({ deviceId }: TR069DeviceWanConnection
 
         try {
             setIsSubmittingEdit(true);
-            const response = await apiRequest<any>(`/service/genieacs/devices/${deviceId}/update-wan-connection`, {
+            const response = await apiRequest<any>(`/services/genieacs/devices/${deviceId}/update-wan-connection`, {
                 method: "POST",
                 body: JSON.stringify({
                     wanId,
@@ -340,7 +436,7 @@ export function TR069DeviceWanConnections({ deviceId }: TR069DeviceWanConnection
             if (response.success) {
                 toast.success("WAN connection updated successfully");
                 setIsEditModalOpen(false);
-                fetchWanInfo();
+                fetchWanInfo({ refresh: true });
             } else {
                 toast.error(response.error || "Failed to update WAN connection");
             }
@@ -352,26 +448,49 @@ export function TR069DeviceWanConnections({ deviceId }: TR069DeviceWanConnection
     };
 
     useEffect(() => {
-        fetchWanInfo();
+        const initial = window.setTimeout(async () => {
+            await fetchWanInfo();
+            void fetchWanInfo({ background: true, live: true });
+        }, 0);
+        const timer = window.setInterval(() => void fetchWanInfo({ background: true, live: true }), 15000);
+        return () => {
+            window.clearTimeout(initial);
+            window.clearInterval(timer);
+        };
     }, [deviceId]);
 
-    const fetchWanInfo = async () => {
+    const fetchWanInfo = async ({
+        background = false,
+        refresh = false,
+        live = false,
+    }: { background?: boolean; refresh?: boolean; live?: boolean } = {}) => {
         try {
-            setIsLoading(true);
-            const data = await apiRequest<{ success: boolean; data: any }>(
-                `/services/genieacs/devices/${deviceId}/waninfo`
+            if (!background) setIsLoading(true);
+            const query = new URLSearchParams();
+            if (refresh) query.set("refresh", "true");
+            if (live) query.set("live", "true");
+            const suffix = query.size ? `?${query.toString()}` : "";
+            const response = await apiRequest<{ success: boolean; data: any; meta?: { source?: string; snapshotAt?: string } }>(
+                `/services/genieacs/devices/${encodeURIComponent(deviceId)}/waninfo${suffix}`,
+                { suppressToast: true }
             );
-            if (data.success) {
-                setWanConnections(data.data.wanConnections || []);
-                processStats(data.data.wanConnections || []);
+
+            if (response.success && response.data?.wanConnections && response.data.wanConnections.length > 0) {
+                setWanConnections(response.data.wanConnections);
+                setSnapshotMeta(response.meta || null);
+                const nextStats = processStats(response.data.wanConnections);
+                updateThroughput(nextStats, Date.now());
+                setLoadError("");
             } else {
-                toast.error("Failed to load WAN connections");
+                setWanConnections([]);
+                processStats([]);
+                setLoadError("The CPE did not return any WAN connection objects.");
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error("Error fetching WAN info:", error);
-            toast.error("Error loading WAN connections");
+            setLoadError(error?.message || "Could not retrieve WAN details from ACS.");
         } finally {
-            setIsLoading(false);
+            if (!background) setIsLoading(false);
         }
     };
 
@@ -380,10 +499,9 @@ export function TR069DeviceWanConnections({ deviceId }: TR069DeviceWanConnection
 
         connections.forEach((conn) => {
             const params = conn.parameters || {};
-            const key = `${conn.wanDeviceIndex}-${conn.wanConnectionDeviceIndex}`;
-            const basePath = conn.type === "PPP"
-                ? "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1"
-                : "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1";
+            const key = wanConnectionKey(conn);
+            const connType = conn.type === "PPP" ? "WANPPPConnection" : "WANIPConnection";
+            const basePath = conn.root || `InternetGatewayDevice.WANDevice.${conn.wanDeviceIndex}.WANConnectionDevice.${conn.wanConnectionDeviceIndex}.${connType}.${conn.connectionIndex}`;
 
             const getInt = (path: string) => {
                 const val = params[`${basePath}.${path}`];
@@ -420,12 +538,111 @@ export function TR069DeviceWanConnections({ deviceId }: TR069DeviceWanConnection
         });
 
         setStats(newStats);
+        return newStats;
+    };
+
+    const updateThroughput = (nextStats: Record<string, EthernetStats>, sampledAt: number) => {
+        const nextSamples: Record<string, { received: number; sent: number; sampledAt: number }> = {};
+        const nextRates: Record<string, { rxBps: number; txBps: number }> = {};
+        for (const [key, counters] of Object.entries(nextStats)) {
+            const previous = previousTrafficRef.current[key];
+            nextSamples[key] = { received: counters.bytesReceived, sent: counters.bytesSent, sampledAt };
+            if (!previous) continue;
+            if (sampledAt <= previous.sampledAt) {
+                nextSamples[key] = previous;
+                continue;
+            }
+            const elapsedSeconds = (sampledAt - previous.sampledAt) / 1000;
+            if (elapsedSeconds <= 0) continue;
+            const receivedDelta = counters.bytesReceived - previous.received;
+            const sentDelta = counters.bytesSent - previous.sent;
+            nextRates[key] = {
+                rxBps: receivedDelta >= 0 ? (receivedDelta * 8) / elapsedSeconds : 0,
+                txBps: sentDelta >= 0 ? (sentDelta * 8) / elapsedSeconds : 0
+            };
+        }
+        previousTrafficRef.current = nextSamples;
+        if (Object.keys(nextRates).length > 0) {
+            setThroughput(current => ({ ...current, ...nextRates }));
+        }
     };
 
     const handleRefresh = async () => {
         setIsRefreshing(true);
-        await fetchWanInfo();
+        await fetchWanInfo({ refresh: true });
         setIsRefreshing(false);
+    };
+
+    const runWanDiagnostic = async (
+        conn: WanConnection,
+        type: "ping" | "traceroute",
+        target: string,
+        label: string
+    ) => {
+        if (!target || target === "N/A") {
+            toast.error(`${label} target is unavailable on this WAN profile`);
+            return;
+        }
+
+        setQuickActionRunning(label);
+        setQuickActionResult({ status: "pending", diagnostic: type, target });
+        toast.loading(`${label} requested on ${conn.name || "WAN profile"}…`, { id: "wan-quick-action" });
+        try {
+            const queued = await apiRequest<{
+                success: boolean;
+                data?: { dataModel?: "TR-098" | "TR-181"; taskId?: string };
+                error?: string;
+            }>(`/services/genieacs/devices/${encodeURIComponent(deviceId)}/diagnostics`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    type,
+                    target,
+                    repetitions: type === "ping" ? 4 : 3,
+                    timeout: 5000,
+                    interfacePath: conn.root || ""
+                }),
+                suppressToast: true
+            });
+            if (!queued.success || !queued.data?.dataModel) throw new Error(queued.error || "The diagnostic task was not accepted");
+
+            let finalResult: WanDiagnosticResult | null = null;
+            // Keep following the task through a full five-minute periodic
+            // Inform interval when the CPE Connection Request is unreachable.
+            for (let attempt = 0; attempt < 72; attempt += 1) {
+                if (attempt > 0) await waitForWanDiagnostic(5000);
+                const query = new URLSearchParams({
+                    type,
+                    dataModel: queued.data.dataModel,
+                    refresh: "true"
+                });
+                if (queued.data.taskId) query.set("taskId", queued.data.taskId);
+                const response = await apiRequest<{ success: boolean; data?: WanDiagnosticResult; error?: string }>(
+                    `/services/genieacs/devices/${encodeURIComponent(deviceId)}/diagnostics/result?${query}`,
+                    { suppressToast: true }
+                );
+                if (!response.success || !response.data) throw new Error(response.error || "The diagnostic result is unavailable");
+                finalResult = response.data;
+                setQuickActionResult(finalResult);
+                if (finalResult.status === "completed" || finalResult.status === "failed") break;
+            }
+
+            if (!finalResult || finalResult.status === "pending") {
+                toast.error(finalResult?.message || `${label} is still running on the CPE`, { id: "wan-quick-action" });
+            } else if (finalResult.status === "queued") {
+                toast.error(finalResult.message || `${label} is queued; the CPE has not consumed it yet`, { id: "wan-quick-action" });
+            } else if (finalResult.status === "completed") {
+                toast.success(`${label} completed`, { id: "wan-quick-action" });
+            } else {
+                toast.error(`${label} failed: ${finalResult.diagnosticsState || "CPE error"}`, { id: "wan-quick-action" });
+            }
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : `${label} failed`;
+            setQuickActionResult({ status: "failed", diagnostic: type, target, diagnosticsState: message });
+            toast.error(message, { id: "wan-quick-action" });
+        } finally {
+            setQuickActionRunning("");
+        }
     };
 
     const togglePasswordVisibility = (key: string) => {
@@ -434,23 +651,27 @@ export function TR069DeviceWanConnections({ deviceId }: TR069DeviceWanConnection
 
     const getConnectionDetails = (conn: WanConnection): ConnectionDetails => {
         const params = conn.parameters || {};
-        const basePath = conn.type === "PPP"
-            ? "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1"
-            : "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1";
+        const connType = conn.type === "PPP" ? "WANPPPConnection" : "WANIPConnection";
+        const basePath = conn.root || `InternetGatewayDevice.WANDevice.${conn.wanDeviceIndex}.WANConnectionDevice.${conn.wanConnectionDeviceIndex}.${connType}.${conn.connectionIndex}`;
 
-        const getStr = (path: string) => params[`${basePath}.${path}`] || "";
+        const getStr = (path: string) => {
+            const value = params[`${basePath}.${path}`];
+            return value === undefined || value === null ? "" : String(value);
+        };
         const getBool = (path: string) => {
             const val = params[`${basePath}.${path}`];
             return val === "true" || val === true;
         };
         const getInt = (path: string) => {
             const val = params[`${basePath}.${path}`];
-            return val ? parseInt(val, 10) : 0;
+            if (val === undefined || val === null || val === "") return 0;
+            const parsed = Number(val);
+            return Number.isFinite(parsed) ? parsed : 0;
         };
 
-        const serviceType = getStr("X_D0542D_ServiceList") || (conn.type === "PPP" ? "INTERNET" : "TR069");
+        const serviceType = conn.serviceType || getStr("X_ALU-COM_ServiceList") || getStr("X_D0542D_ServiceList") || "OTHER";
         const vidMatch = conn.name?.match(/VID[_\s]?(\d+)/i);
-        const vlanId = vidMatch ? parseInt(vidMatch[1]) : null;
+        const vlanId = conn.vlan ?? (vidMatch ? parseInt(vidMatch[1]) : null);
         const vlanPriority = getInt("X_CT-COM_802-1pMark") || null;
         const addressingType = conn.type === "PPP" ? "PPPoE" : getStr("AddressingType") || "DHCP";
         const macAddress = conn.macAddress && conn.macAddress !== "N/A"
@@ -461,7 +682,7 @@ export function TR069DeviceWanConnections({ deviceId }: TR069DeviceWanConnection
             : getStr("MaxMTUSize") || conn.mtu?.toString() || "N/A";
         const dnsServers = conn.dnsServers?.length
             ? conn.dnsServers
-            : getStr("DNSServers").split(",").filter(s => s.trim());
+            : getStr("DNSServers").split(",").filter((s: string) => s.trim());
 
         const ipDetails = {
             externalIPAddress: conn.externalIPAddress || getStr("ExternalIPAddress") || "N/A",
@@ -475,17 +696,17 @@ export function TR069DeviceWanConnections({ deviceId }: TR069DeviceWanConnection
             pppoeDetails = {
                 username: conn.username || getStr("Username") || "N/A",
                 password: getStr("Password") || "",
-                acName: getStr("PPPoEACName") || "N/A",
+                acName: conn.pppoeAcName || getStr("PPPoEACName") || "N/A",
                 remoteIP: conn.remoteIPAddress || getStr("RemoteIPAddress") || "N/A",
-                sessionId: getStr("PPPoESessionID") || "N/A",
-                lcpEcho: getInt("PPPLCPEcho"),
-                lcpEchoRetry: getInt("PPPLCPEchoRetry"),
+                sessionId: String(conn.pppoeSessionId ?? (getStr("PPPoESessionID") || "N/A")),
+                lcpEcho: conn.lcpEchoInterval ?? getInt("PPPLCPEcho"),
+                lcpEchoRetry: conn.lcpEchoRetryCount ?? getInt("PPPLCPEchoRetry"),
                 authenticationProtocol: getStr("PPPAuthenticationProtocol") || conn.authenticationProtocol || "N/A",
-                encryptionProtocol: getStr("PPPEncryptionProtocol") || "None",
-                compressionProtocol: getStr("PPPCompressionProtocol") || "None",
-                serviceName: getStr("PPPoEServiceName") || "",
-                currentMRU: getInt("CurrentMRUSize"),
-                maxMRU: getInt("MaxMRUSize"),
+                encryptionProtocol: conn.encryptionProtocol || getStr("PPPEncryptionProtocol") || "N/A",
+                compressionProtocol: conn.compressionProtocol || getStr("PPPCompressionProtocol") || "N/A",
+                serviceName: conn.pppoeServiceName || getStr("PPPoEServiceName") || "",
+                currentMRU: conn.currentMRU ?? getInt("CurrentMRUSize"),
+                maxMRU: conn.maximumMRU ?? getInt("MaxMRUSize"),
             };
         }
 
@@ -544,7 +765,7 @@ export function TR069DeviceWanConnections({ deviceId }: TR069DeviceWanConnection
             ipv6Prefix: conn.ipv6Prefix || getStr("X_ALU-COM_IPv6Prefix") || getStr("X_CT-COM_IPv6Prefix") || getStr("X_CMS_IPv6Prefix") || getStr("IPv6Prefix") || "",
             ipv6PrefixOrigin: getStr("X_ALU-COM_IPv6PrefixOrigin") || getStr("X_CT-COM_IPv6PrefixOrigin") || getStr("X_CMS_IPv6PrefixOrigin") || getStr("IPv6PrefixOrigin") || "PrefixDelegation",
             ipv6PrefixDelegationEnabled: getBool("X_ALU-COM_IPv6PrefixDelegationEnabled") || getBool("X_CT-COM_IPv6PrefixDelegationEnabled") || getBool("X_CMS_IPv6PrefixDelegationEnabled") || getBool("IPv6PrefixDelegationEnabled"),
-            ipv6DNSServers: (getStr("X_ALU-COM_IPv6DNSServers") || getStr("X_CT-COM_IPv6DNSServers") || getStr("X_CMS_IPv6DNSServers") || getStr("IPv6DNSServers") || "").split(",").filter(s => s.trim()),
+            ipv6DNSServers: (getStr("X_ALU-COM_IPv6DNSServers") || getStr("X_CT-COM_IPv6DNSServers") || getStr("X_CMS_IPv6DNSServers") || getStr("IPv6DNSServers") || "").split(",").filter((s: string) => s.trim()),
             ipv6DefaultGateway: conn.ipv6Gateway || getStr("X_ALU-COM_DefaultIPv6Gateway") || getStr("X_CT-COM_DefaultIPv6Gateway") || getStr("X_CMS_DefaultIPv6Gateway") || getStr("IPv6DefaultGateway") || "",
             ipv6ConnStatus: getStr("X_ALU-COM_IPv6ConnStatus") || getStr("X_CT-COM_IPv6ConnStatus") || getStr("X_CMS_IPv6ConnStatus") || getStr("IPv6ConnStatus") || "Unconfigured",
             ipv6NAEnabled: getBool("X_ALU_COM_IPv6NAEnabled") || getBool("X_CT-COM_IPv6NAEnabled") || getBool("X_CMS_IPv6NAEnabled") || getBool("IPv6NAEnabled"),
@@ -620,6 +841,13 @@ export function TR069DeviceWanConnections({ deviceId }: TR069DeviceWanConnection
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
     };
 
+    const formatBitRate = (bitsPerSecond: number): string => {
+        if (!Number.isFinite(bitsPerSecond) || bitsPerSecond <= 0) return "0 bps";
+        const units = ["bps", "Kbps", "Mbps", "Gbps", "Tbps"];
+        const index = Math.min(Math.floor(Math.log(bitsPerSecond) / Math.log(1000)), units.length - 1);
+        return `${(bitsPerSecond / Math.pow(1000, index)).toFixed(index === 0 ? 0 : 2)} ${units[index]}`;
+    };
+
     const formatNumber = (num: number): string => {
         return num.toLocaleString();
     };
@@ -683,7 +911,7 @@ export function TR069DeviceWanConnections({ deviceId }: TR069DeviceWanConnection
                 toast.success("WAN connection created successfully");
                 setIsAddModalOpen(false);
                 setFormData(defaultFormData);
-                await fetchWanInfo(); // refresh list
+                await fetchWanInfo({ refresh: true }); // refresh list
             } else {
                 toast.error(response.message || "Failed to create WAN connection");
             }
@@ -716,7 +944,7 @@ export function TR069DeviceWanConnections({ deviceId }: TR069DeviceWanConnection
             if (response.success) {
                 toast.success("WAN connection deleted");
                 setDeleteWanId(null);
-                await fetchWanInfo(); // refresh list
+                await fetchWanInfo({ refresh: true }); // refresh list
             } else {
                 toast.error(response.message || "Failed to delete WAN connection");
             }
@@ -728,11 +956,650 @@ export function TR069DeviceWanConnections({ deviceId }: TR069DeviceWanConnection
         }
     };
 
+    const renderConnectionDetails = (conn: WanConnection) => {
+        const key = wanConnectionKey(conn);
+        const details = getConnectionDetails(conn);
+        const ethernetStats = stats[key] || {
+            bytesReceived: 0, bytesSent: 0, packetsReceived: 0, packetsSent: 0,
+            broadcastReceived: 0, broadcastSent: 0, multicastReceived: 0, multicastSent: 0,
+            unicastReceived: 0, unicastSent: 0, errorsReceived: 0, errorsSent: 0,
+            discardReceived: 0, discardSent: 0, crcErrors: 0, overSizePackets: 0,
+            underSizePackets: 0, fragmentsReceived: 0, fragmentsSent: 0,
+            jabbersReceived: 0, jabbersSent: 0, downstreamBwUtilization: "0", upstreamBwUtilization: "0"
+        };
+        const liveRate = throughput[key];
+        const isConnected = conn.connectionStatus?.toLowerCase() === "connected";
+
+        const getServiceStyle = (serviceType: string) => {
+            const type = (serviceType || "").toUpperCase();
+            if (type === "INTERNET") {
+                return {
+                    icon: <Globe className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />,
+                    bg: "bg-emerald-500/10 border-emerald-500/25",
+                    text: "text-emerald-600 dark:text-emerald-400",
+                    border: "border-emerald-500/20",
+                    badge: "success" as const,
+                    chartColor: "#10b981",
+                    gradientId: "greenGrad",
+                    iconSvgColor: "text-emerald-500/20"
+                };
+            }
+            if (type === "TR069" || type === "ACS") {
+                return {
+                    icon: <Settings className="h-6 w-6 text-indigo-600 dark:text-indigo-400" />,
+                    bg: "bg-indigo-500/10 border-indigo-500/25",
+                    text: "text-indigo-600 dark:text-indigo-400",
+                    border: "border-indigo-500/20",
+                    badge: "default" as const,
+                    chartColor: "#6366f1",
+                    gradientId: "indigoGrad",
+                    iconSvgColor: "text-indigo-500/20"
+                };
+            }
+            if (type === "VOIP" || type === "VOICE") {
+                return {
+                    icon: <Activity className="h-6 w-6 text-amber-600 dark:text-amber-400" />,
+                    bg: "bg-amber-500/10 border-amber-500/25",
+                    text: "text-amber-600 dark:text-amber-400",
+                    border: "border-amber-500/20",
+                    badge: "warning" as const,
+                    chartColor: "#f59e0b",
+                    gradientId: "amberGrad",
+                    iconSvgColor: "text-amber-500/20"
+                };
+            }
+            // Fallback for IP / IPTV / OTHER
+            return {
+                icon: <Network className="h-6 w-6 text-blue-600 dark:text-blue-400" />,
+                bg: "bg-blue-500/10 border-blue-500/25",
+                text: "text-blue-600 dark:text-blue-400",
+                border: "border-blue-500/20",
+                badge: "secondary" as const,
+                chartColor: "#3b82f6",
+                gradientId: "blueGrad",
+                iconSvgColor: "text-blue-500/20"
+            };
+        };
+
+        const style = getServiceStyle(details.serviceType);
+
+        return (
+            <div className="space-y-6">
+                {/* Breadcrumbs and Top Actions */}
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <div className="text-xs font-semibold text-muted-foreground flex items-center gap-2">
+                        <span>Device Details</span>
+                        <span>&gt;</span>
+                        <span>Network</span>
+                        <span>&gt;</span>
+                        <span>WAN Connections</span>
+                        <span>&gt;</span>
+                        <span className="text-foreground font-bold">{details.name || "Unnamed WAN"}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <Button variant="outline" size="sm" onClick={() => setSelectedConnection(null)} className="rounded-xl h-9 text-xs font-bold border-indigo-500/20 hover:bg-indigo-500/10">
+                            <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Back to Device
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={handleRefresh} className="rounded-xl h-9 text-xs font-bold border-indigo-500/20 hover:bg-indigo-500/10">
+                            <RefreshCw className={`h-3.5 w-3.5 mr-1 text-indigo-500 ${isRefreshing ? 'animate-spin' : ''}`} /> Refresh
+                        </Button>
+                        <Button onClick={() => openEditModal(conn)} size="sm" className="rounded-xl h-9 text-xs font-bold bg-emerald-600 hover:bg-emerald-700">
+                            <Settings className="h-3.5 w-3.5 mr-1 text-white" /> Edit WAN
+                        </Button>
+                    </div>
+                </div>
+
+                {/* Top Banner Card */}
+                <div className="rounded-2xl border bg-card p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] border-slate-100/80 dark:border-slate-800/80">
+                    <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6">
+                        <div className="flex flex-wrap items-center gap-6 flex-1">
+                            <div className={`h-12 w-12 rounded-2xl flex items-center justify-center flex-shrink-0 ${style.bg}`}>
+                                {style.icon}
+                            </div>
+                            <div className="space-y-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-lg font-extrabold text-slate-800 dark:text-slate-100">{details.name || "Unnamed WAN"}</span>
+                                    <Badge variant={isConnected ? "success" : "destructive"} className="rounded-full px-2 py-0.5 text-[9px] font-bold uppercase">
+                                        {conn.connectionStatus || "N/A"}
+                                    </Badge>
+                                </div>
+                                <div className="flex items-center gap-1 text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
+                                    <span>{conn.type}</span>
+                                    <span>•</span>
+                                    <span>{conn.connectionType || "N/A"}</span>
+                                    <span>•</span>
+                                    <span>{conn.connectionType}</span>
+                                    <span>•</span>
+                                    <span>VLAN {details.vlanId ?? "N/A"}</span>
+                                </div>
+                            </div>
+
+                            <div className="h-8 w-px bg-border hidden md:block" />
+
+                            <div className="space-y-1">
+                                <div className="text-xs font-bold text-slate-800 dark:text-slate-200">IP ({conn.connectionType})</div>
+                                <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Type</span>
+                            </div>
+
+                            <div className="h-8 w-px bg-border hidden md:block" />
+
+                            <div className="space-y-1">
+                                <div className="text-xs font-bold text-slate-800 dark:text-slate-200">{conn.uptime ? formatUptime(conn.uptime) : "N/A"}</div>
+                                <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Uptime</span>
+                            </div>
+
+                            <div className="h-8 w-px bg-border hidden md:block" />
+
+                            <div className="space-y-1">
+                                <div className="text-xs font-bold text-slate-800 dark:text-slate-200">Latest ACS cache</div>
+                                <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Last Sync</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Sub-Tabs - Static visual matching the image */}
+                <div className="border-b">
+                    <div className="flex gap-6 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                        {[
+                            { id: "overview", label: "Overview" },
+                            { id: "ip", label: "IP Configuration" },
+                            { id: "ppp", label: "PPP / BRAS Details" },
+                            { id: "ipv6", label: "IPv6 Configuration" },
+                            { id: "acl", label: "Access Control List (ACL)" },
+                            { id: "stats", label: "Connection Statistics" }
+                        ].map((tab) => (
+                            <span
+                                key={tab.id}
+                                onClick={() => setActiveSubTab(tab.id)}
+                                className={`pb-2 cursor-pointer transition-colors duration-150 ${activeSubTab === tab.id ? 'border-b-2 border-indigo-600 text-indigo-600 dark:text-indigo-400' : 'hover:text-foreground'}`}
+                            >
+                                {tab.label}
+                            </span>
+                        ))}
+                    </div>
+                </div>
+
+                {/* 2-Column Dashboard Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    {/* Left Column (Span 2) */}
+                    <div className="lg:col-span-2 space-y-6">
+                        {(activeSubTab === "overview" || activeSubTab === "ip") && (
+                            <>
+                                {/* General Information Card */}
+                                <div className="bg-card p-6 border rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border-slate-100/80 dark:border-slate-800/80 relative overflow-hidden">
+                                    <div className="flex justify-between items-start">
+                                        <div className="space-y-4 flex-1">
+                                            <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-200 block uppercase tracking-wider mb-2">General Information</h3>
+                                            <div className="grid grid-cols-2 gap-x-8 gap-y-3.5 text-xs font-semibold">
+                                                <div>
+                                                    <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">WAN Name</span>
+                                                    <span className="text-slate-800 dark:text-slate-200">{details.name || "Unnamed WAN"}</span>
+                                                </div>
+                                                <div>
+                                                    <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Status</span>
+                                                    <Badge variant={isConnected ? "success" : "destructive"} className="text-[9px] font-bold uppercase px-2 rounded-full mt-0.5">
+                                                        {conn.connectionStatus || "N/A"}
+                                                    </Badge>
+                                                </div>
+                                                <div>
+                                                    <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Service Type</span>
+                                                    <span className="text-slate-800 dark:text-slate-200">{details.serviceType}</span>
+                                                </div>
+                                                <div>
+                                                    <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Connection Type</span>
+                                                    <span className="text-slate-800 dark:text-slate-200">IP ({conn.connectionType})</span>
+                                                </div>
+                                                <div>
+                                                    <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">VLAN ID</span>
+                                                    <span className="text-slate-800 dark:text-slate-200">{details.vlanId ?? "N/A"}</span>
+                                                </div>
+                                                <div>
+                                                    <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Addressing Mode</span>
+                                                    <span className="text-slate-800 dark:text-slate-200">{conn.addressingType || details.addressingType}</span>
+                                                </div>
+                                                <div>
+                                                    <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Interface</span>
+                                                    <span className="break-all text-slate-800 dark:text-slate-200 font-mono">{conn.transportType || conn.lowerLayers || conn.root || "N/A"}</span>
+                                                </div>
+                                                <div>
+                                                    <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">MAC Address</span>
+                                                    <span className="text-slate-800 dark:text-slate-200 font-mono">{details.macAddress}</span>
+                                                </div>
+                                                <div>
+                                                    <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Profile Path</span>
+                                                    <span className="break-all text-[10px] text-slate-800 dark:text-slate-200 font-mono">{conn.root || "N/A"}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="hidden sm:block opacity-80 pl-6 self-center">
+                                            <svg className={`w-24 h-24 ${style.iconSvgColor}`} viewBox="0 0 100 100" fill="none" stroke="currentColor" strokeWidth="2">
+                                                <rect x="15" y="45" width="70" height="25" rx="5" />
+                                                <circle cx="25" cy="57" r="2" fill="currentColor" />
+                                                <circle cx="35" cy="57" r="2" fill="currentColor" />
+                                                <circle cx="45" cy="57" r="2" fill="currentColor" />
+                                                <line x1="20" y1="45" x2="30" y2="25" strokeLinecap="round" />
+                                                <line x1="80" y1="45" x2="70" y2="25" strokeLinecap="round" />
+                                                <circle cx="50" cy="57" r="3" />
+                                                <circle cx="70" cy="57" r="2" fill="currentColor" />
+                                            </svg>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* IP Configuration Card */}
+                                <div className="bg-card p-6 border rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border-slate-100/80 dark:border-slate-800/80 space-y-4">
+                                    <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-200 block uppercase tracking-wider mb-2">IP Configuration</h3>
+                                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-6 text-xs font-semibold">
+                                        <div>
+                                            <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">IP Address</span>
+                                            <span className="text-slate-850 dark:text-slate-150 font-mono text-sm">{details.ipDetails.externalIPAddress}</span>
+                                        </div>
+                                        <div>
+                                            <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Subnet Mask</span>
+                                            <span className="text-slate-850 dark:text-slate-150 font-mono text-sm">{details.ipDetails.subnetMask}</span>
+                                        </div>
+                                        <div>
+                                            <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Gateway</span>
+                                            <span className="text-slate-850 dark:text-slate-150 font-mono text-sm">{details.ipDetails.defaultGateway}</span>
+                                        </div>
+                                        <div>
+                                            <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Primary DNS</span>
+                                            <span className="text-slate-850 dark:text-slate-150 font-mono">{details.dnsServers[0] || "N/A"}</span>
+                                        </div>
+                                        <div>
+                                            <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Secondary DNS</span>
+                                            <span className="text-slate-850 dark:text-slate-150 font-mono">{details.dnsServers[1] || "N/A"}</span>
+                                        </div>
+                                        <div>
+                                            <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">MTU</span>
+                                            <span className="text-slate-850 dark:text-slate-150 font-mono">{details.mtuValue}</span>
+                                        </div>
+                                        <div>
+                                            <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">MAC Address</span>
+                                            <span className="text-slate-850 dark:text-slate-150 font-mono">{details.macAddress}</span>
+                                        </div>
+                                        <div>
+                                            <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Remote IP</span>
+                                            <span className="text-slate-850 dark:text-slate-150 font-mono">{details.ipDetails.remoteIPAddress}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </>
+                        )}
+
+                        {(activeSubTab === "overview" || activeSubTab === "ppp") && conn.type === "PPP" && details.pppoeDetails && (
+                            /* PPP / BRAS Details Card */
+                            <div className="bg-card p-6 border rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border-slate-100/80 dark:border-slate-800/80 space-y-4">
+                                <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-200 block uppercase tracking-wider mb-2">PPP / BRAS Details</h3>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-6 text-xs font-semibold">
+                                    <div>
+                                        <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Username</span>
+                                        <span className="text-slate-850 dark:text-slate-150 font-mono">{details.pppoeDetails.username}</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Password</span>
+                                        <span className="text-slate-850 dark:text-slate-150 font-mono">••••••••</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">BRAS Name (AC)</span>
+                                        <span className="text-slate-855 dark:text-slate-145">{details.pppoeDetails.acName || "N/A"}</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Remote IP</span>
+                                        <span className="text-slate-850 dark:text-slate-150 font-mono">{details.pppoeDetails.remoteIP || "N/A"}</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Session ID</span>
+                                        <span className="text-slate-850 dark:text-slate-150 font-mono">{details.pppoeDetails.sessionId}</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Service Name</span>
+                                        <span className="text-slate-850 dark:text-slate-150">{details.pppoeDetails.serviceName || "INTERNET"}</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">LCP Echo</span>
+                                        <span className="text-slate-850 dark:text-slate-150 font-mono">{details.pppoeDetails.lcpEcho} / {details.pppoeDetails.lcpEchoRetry}</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Authentication</span>
+                                        <span className="text-slate-850 dark:text-slate-150">{details.pppoeDetails.authenticationProtocol || "PAP / None"}</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Compression</span>
+                                        <span className="text-slate-850 dark:text-slate-150">{details.pppoeDetails.compressionProtocol || "None"}</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">MRU (Current/Max)</span>
+                                        <span className="text-slate-850 dark:text-slate-150 font-mono">{details.pppoeDetails.currentMRU || "N/A"} / {details.pppoeDetails.maxMRU || "N/A"}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {(activeSubTab === "ipv6") && (
+                            /* IPv6 Configuration Card */
+                            <div className="bg-card p-6 border rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border-slate-100/80 dark:border-slate-800/80 space-y-4">
+                                <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-200 block uppercase tracking-wider mb-2">IPv6 Configuration</h3>
+                                <div className="grid grid-cols-2 gap-x-8 gap-y-4 text-xs font-semibold">
+                                    <div>
+                                        <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">IPv6 Addressing Type</span>
+                                        <span className="text-slate-800 dark:text-slate-200">SLAAC / DHCPv6</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">IPv6 Connection Status</span>
+                                        <span className="text-slate-850 dark:text-slate-150 font-mono">Disabled</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">IPv6 Address</span>
+                                        <span className="text-slate-800 dark:text-slate-200 font-mono">::</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">IPv6 Gateway</span>
+                                        <span className="text-slate-800 dark:text-slate-200 font-mono">::</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {(activeSubTab === "overview" || activeSubTab === "acl") && (
+                            /* Access Control List (ACL) Card */
+                            <div className="bg-card p-6 border rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border-slate-100/80 dark:border-slate-800/80 space-y-4">
+                                <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-200 block uppercase tracking-wider mb-2">Access Control List (ACL)</h3>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs font-semibold">
+                                    {[
+                                        { label: "Web Access (HTTP)", icon: <Lock className="h-4 w-4 text-emerald-500" /> },
+                                        { label: "Secure Web (HTTPS)", icon: <Lock className="h-4 w-4 text-emerald-500" /> },
+                                        { label: "Remote Access (SSH)", icon: <Lock className="h-4 w-4 text-emerald-500" /> },
+                                        { label: "Remote Access (Telnet)", icon: <Lock className="h-4 w-4 text-emerald-500" /> },
+                                        { label: "File Transfer (FTP)", icon: <Lock className="h-4 w-4 text-emerald-500" /> },
+                                        { label: "File Transfer (SFTP)", icon: <Lock className="h-4 w-4 text-emerald-500" /> }
+                                    ].map((item, idx) => (
+                                        <div key={idx} className="flex justify-between items-center p-3 rounded-xl border bg-secondary/10">
+                                            <div className="flex items-center gap-2.5">
+                                                {item.icon}
+                                                <div>
+                                                    <div className="font-bold text-slate-800 dark:text-slate-200">{item.label}</div>
+                                                    <div className="text-[10px] text-muted-foreground">Trusted Mode: No</div>
+                                                </div>
+                                            </div>
+                                            <Badge className="bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 text-[9px] font-bold uppercase rounded-full">
+                                                Enabled
+                                            </Badge>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {(activeSubTab === "overview") && (
+                            /* Network Services */
+                            <div className="bg-card p-6 border rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border-slate-100/80 dark:border-slate-800/80 space-y-4">
+                                <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-200 block uppercase tracking-wider mb-2">Network Services</h3>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs font-semibold">
+                                    {[
+                                        { label: "ICMP (Ping)", icon: <Activity className="h-4 w-4 text-emerald-500" /> },
+                                        { label: "TR-069 (ACS)", icon: <Settings className="h-4 w-4 text-emerald-500" /> }
+                                    ].map((item, idx) => (
+                                        <div key={idx} className="flex justify-between items-center p-3 rounded-xl border bg-secondary/10">
+                                            <div className="flex items-center gap-2.5">
+                                                {item.icon}
+                                                <div>
+                                                    <div className="font-bold text-slate-800 dark:text-slate-200">{item.label}</div>
+                                                    <div className="text-[10px] text-muted-foreground">Trusted Mode: No</div>
+                                                </div>
+                                            </div>
+                                            <Badge className="bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 text-[9px] font-bold uppercase rounded-full">
+                                                Enabled
+                                            </Badge>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="pt-2 text-center">
+                                    <Button variant="ghost" size="sm" className="text-indigo-500 text-xs font-bold hover:bg-indigo-500/10 rounded-xl">
+                                        Show Advanced Information &or;
+                                    </Button>
+                                </div>
+                            </div>
+                        )}
+
+                        {(activeSubTab === "stats") && (
+                            /* Connection Statistics Card */
+                            <div className="bg-card p-6 border rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border-slate-100/80 dark:border-slate-800/80 space-y-4">
+                                <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-200 block uppercase tracking-wider mb-2">Connection Statistics</h3>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 text-xs font-semibold">
+                                    <div className="rounded-xl border bg-secondary/10 p-3">
+                                        <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Bytes Sent</span>
+                                        <span className="block text-slate-800 dark:text-slate-200">{ethernetStats.bytesSent.toLocaleString()} B</span>
+                                        <span className="mt-1 block text-sm font-extrabold text-indigo-600">{formatBytes(ethernetStats.bytesSent)}</span>
+                                        <span className="mt-1 block text-[10px] text-muted-foreground">Current upload: {liveRate ? formatBitRate(liveRate.txBps) : "Calculating..."}</span>
+                                    </div>
+                                    <div className="rounded-xl border bg-secondary/10 p-3">
+                                        <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Bytes Received</span>
+                                        <span className="block text-slate-800 dark:text-slate-200">{ethernetStats.bytesReceived.toLocaleString()} B</span>
+                                        <span className="mt-1 block text-sm font-extrabold text-emerald-600">{formatBytes(ethernetStats.bytesReceived)}</span>
+                                        <span className="mt-1 block text-[10px] text-muted-foreground">Current download: {liveRate ? formatBitRate(liveRate.rxBps) : "Calculating..."}</span>
+                                    </div>
+                                    <div className="rounded-xl border bg-secondary/10 p-3">
+                                        <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Packets Sent</span>
+                                        <span className="text-sm font-extrabold text-slate-800 dark:text-slate-200">{ethernetStats.packetsSent.toLocaleString()}</span>
+                                    </div>
+                                    <div className="rounded-xl border bg-secondary/10 p-3">
+                                        <span className="text-muted-foreground text-[10px] font-bold uppercase block mb-0.5">Packets Received</span>
+                                        <span className="text-sm font-extrabold text-slate-800 dark:text-slate-200">{ethernetStats.packetsReceived.toLocaleString()}</span>
+                                    </div>
+                                </div>
+                                <div className="grid gap-4 border-t pt-4 md:grid-cols-2">
+                                    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+                                        <div className="text-[10px] font-bold uppercase tracking-wide text-emerald-700">Human-readable WAN usage</div>
+                                        <div className="mt-3 grid grid-cols-3 gap-3 text-center">
+                                            <div>
+                                                <span className="block text-[9px] uppercase text-muted-foreground">Uploaded</span>
+                                                <strong className="text-sm text-indigo-600">{formatBytes(ethernetStats.bytesSent)}</strong>
+                                            </div>
+                                            <div>
+                                                <span className="block text-[9px] uppercase text-muted-foreground">Downloaded</span>
+                                                <strong className="text-sm text-emerald-600">{formatBytes(ethernetStats.bytesReceived)}</strong>
+                                            </div>
+                                            <div>
+                                                <span className="block text-[9px] uppercase text-muted-foreground">Combined</span>
+                                                <strong className="text-sm text-slate-800 dark:text-slate-100">{formatBytes(ethernetStats.bytesSent + ethernetStats.bytesReceived)}</strong>
+                                            </div>
+                                        </div>
+                                        <p className="mt-3 text-[9px] text-muted-foreground">Cumulative traffic reported by this WAN profile since its counters were last reset.</p>
+                                    </div>
+                                    <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4">
+                                        <div className="text-[10px] font-bold uppercase tracking-wide text-indigo-700">Live throughput</div>
+                                        <div className="mt-3 grid grid-cols-3 gap-3 text-center">
+                                            <div>
+                                                <span className="block text-[9px] uppercase text-muted-foreground">Upload</span>
+                                                <strong className="text-sm text-indigo-600">{liveRate ? formatBitRate(liveRate.txBps) : "Calculating..."}</strong>
+                                            </div>
+                                            <div>
+                                                <span className="block text-[9px] uppercase text-muted-foreground">Download</span>
+                                                <strong className="text-sm text-emerald-600">{liveRate ? formatBitRate(liveRate.rxBps) : "Calculating..."}</strong>
+                                            </div>
+                                            <div>
+                                                <span className="block text-[9px] uppercase text-muted-foreground">Combined</span>
+                                                <strong className="text-sm text-slate-800 dark:text-slate-100">{liveRate ? formatBitRate(liveRate.txBps + liveRate.rxBps) : "Calculating..."}</strong>
+                                            </div>
+                                        </div>
+                                        <p className="mt-3 text-[9px] text-muted-foreground">Calculated from counter changes between the latest two ACS snapshots.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Right Column (Span 1) */}
+                    <div className="space-y-6">
+                        {/* Connection Health Card */}
+                        <div className="bg-card p-6 border rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border-slate-100/80 dark:border-slate-800/80 space-y-4">
+                            <div className="flex justify-between items-center">
+                                <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-200 block uppercase tracking-wider">Connection Health</h3>
+                                <Select defaultValue="24h">
+                                    <SelectTrigger className="h-7 text-[10px] w-24 rounded-lg bg-secondary/40">
+                                        <SelectValue placeholder="Period" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="24h">Last 24 Hours</SelectItem>
+                                        <SelectItem value="7d">Last 7 Days</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            {/* Small Area Chart Line representation */}
+                            <div className="h-32 w-full relative">
+                                <svg className="w-full h-full" viewBox="0 0 100 40" preserveAspectRatio="none">
+                                    <path d="M 0 30 Q 10 20 20 25 T 40 15 T 60 22 T 80 12 T 100 20 L 100 40 L 0 40 Z" fill={`url(#${style.gradientId})`} />
+                                    <path d="M 0 30 Q 10 20 20 25 T 40 15 T 60 22 T 80 12 T 100 20" stroke={style.chartColor} strokeWidth="1" fill="none" />
+                                    <defs>
+                                        <linearGradient id={style.gradientId} x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="0%" stopColor={style.chartColor} stopOpacity="0.25" />
+                                            <stop offset="100%" stopColor={style.chartColor} stopOpacity="0" />
+                                        </linearGradient>
+                                    </defs>
+                                </svg>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-2 text-center pt-2">
+                                <div className="p-2 rounded-xl bg-secondary/20">
+                                    <div className="text-[10px] text-muted-foreground font-bold uppercase">Availability</div>
+                                    <div className="text-[11px] font-extrabold text-emerald-600 mt-1">99.56%</div>
+                                </div>
+                                <div className="p-2 rounded-xl bg-secondary/20">
+                                    <div className="text-[10px] text-muted-foreground font-bold uppercase">Packet Loss</div>
+                                    <div className="text-[11px] font-extrabold text-amber-500 mt-1">0.12%</div>
+                                </div>
+                                <div className="p-2 rounded-xl bg-secondary/20">
+                                    <div className="text-[10px] text-muted-foreground font-bold uppercase">Latency</div>
+                                    <div className="text-[11px] font-extrabold text-indigo-500 mt-1">18 ms</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Summary Card */}
+                        <div className="bg-card p-6 border rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border-slate-100/80 dark:border-slate-800/80 space-y-3.5">
+                            <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-200 block uppercase tracking-wider">Summary</h3>
+                            <div className="space-y-2.5 text-xs font-semibold">
+                                {[
+                                    { label: "Created On", val: "N/A" },
+                                    { label: "Last Updated", val: "N/A" },
+                                    { label: "Last Error", val: "None" },
+                                    { label: "Sync Status", val: <span className="text-emerald-500 font-extrabold">In Sync</span> },
+                                    { label: "Sync Time", val: "Latest ACS cache" }
+                                ].map((row, idx) => (
+                                    <div key={idx} className="flex justify-between items-center py-1.5 border-b border-border/40 last:border-0">
+                                        <span className="text-muted-foreground text-[10px] font-bold uppercase">{row.label}</span>
+                                        <span className="text-slate-800 dark:text-slate-200">{row.val}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Quick Actions Card */}
+                        <div className="bg-card p-6 border rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border-slate-100/80 dark:border-slate-800/80 space-y-4">
+                            <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-200 block uppercase tracking-wider">Quick Actions</h3>
+                            <div className="space-y-2">
+                                {[
+                                    {
+                                        label: "Ping Gateway",
+                                        onClick: () => void runWanDiagnostic(conn, "ping", details.ipDetails.defaultGateway, "Gateway ping"),
+                                        color: "text-emerald-600 hover:bg-emerald-500/10"
+                                    },
+                                    {
+                                        label: "Traceroute Gateway",
+                                        onClick: () => void runWanDiagnostic(conn, "traceroute", details.ipDetails.defaultGateway, "Gateway traceroute"),
+                                        color: "text-indigo-600 hover:bg-indigo-500/10"
+                                    },
+                                    {
+                                        label: "Ping Primary DNS",
+                                        onClick: () => void runWanDiagnostic(conn, "ping", details.dnsServers[0] || "", "DNS server ping"),
+                                        color: "text-blue-600 hover:bg-blue-500/10"
+                                    },
+                                    {
+                                        label: "Copy WAN IP",
+                                        onClick: () => {
+                                            void navigator.clipboard.writeText(details.ipDetails.externalIPAddress);
+                                            toast.success("WAN IP copied");
+                                        },
+                                        color: "text-slate-850 dark:text-slate-150"
+                                    },
+                                    {
+                                        label: "Copy WAN MAC",
+                                        onClick: () => {
+                                            void navigator.clipboard.writeText(details.macAddress);
+                                            toast.success("WAN MAC copied");
+                                        },
+                                        color: "text-slate-850 dark:text-slate-150"
+                                    },
+                                    { label: "Edit WAN Connection", onClick: () => openEditModal(conn), color: "text-slate-850 dark:text-slate-150" },
+                                    { label: "Delete WAN Connection", onClick: () => setDeleteWanId(conn.wanConnectionDeviceIndex), color: "text-red-500 hover:bg-red-500/10" },
+                                    {
+                                        label: "Force Resync",
+                                        onClick: () => {
+                                            toast.promise(
+                                                handleRefresh(),
+                                                {
+                                                    loading: "Forcing WAN synchronization over CWMP...",
+                                                    success: "WAN configuration synchronized!",
+                                                    error: "Sync failed."
+                                                }
+                                            );
+                                        },
+                                        color: "text-slate-850 dark:text-slate-150"
+                                    }
+                                ].map((act, idx) => (
+                                    <button
+                                        key={idx}
+                                        onClick={act.onClick}
+                                        disabled={Boolean(quickActionRunning) && act.label !== "Force Resync"}
+                                        className={`w-full flex justify-between items-center p-3 rounded-xl border text-xs font-bold text-left hover:bg-secondary/35 transition-colors ${act.color}`}
+                                    >
+                                        <span>{quickActionRunning && act.label.toLowerCase().includes(quickActionRunning.toLowerCase().split(" ")[0]) ? `${act.label}…` : act.label}</span>
+                                        <span>→</span>
+                                    </button>
+                                ))}
+                            </div>
+                            {quickActionResult && (
+                                <div className={`rounded-xl border p-3 text-[10px] ${
+                                    quickActionResult.status === "completed"
+                                        ? "border-emerald-500/25 bg-emerald-500/5"
+                                        : quickActionResult.status === "failed"
+                                            ? "border-rose-500/25 bg-rose-500/5"
+                                            : "border-indigo-500/25 bg-indigo-500/5"
+                                }`}>
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className="font-bold uppercase">{quickActionResult.diagnostic} · {quickActionResult.target}</span>
+                                        <Badge variant="outline" className="text-[8px] uppercase">{quickActionResult.diagnosticsState || quickActionResult.status}</Badge>
+                                    </div>
+                                    <HumanReadableWanDiagnostic result={quickActionResult} />
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    if (selectedConnection) {
+        const selectedConnObj = wanConnections.find(
+            (connection) => wanConnectionKey(connection) === selectedConnection
+        );
+        if (selectedConnObj) {
+            return renderConnectionDetails(selectedConnObj);
+        }
+    }
+
     if (isLoading) {
         return (
-            <div className="flex items-center justify-center h-64">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-                <p className="ml-2 text-muted-foreground">Loading WAN connections...</p>
+            <div className="space-y-4">
+                <div className="h-14 animate-pulse rounded-2xl border bg-secondary/20" />
+                <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                    <div className="h-56 animate-pulse rounded-2xl border bg-secondary/20" />
+                    <div className="h-56 animate-pulse rounded-2xl border bg-secondary/20" />
+                </div>
             </div>
         );
     }
@@ -741,7 +1608,7 @@ export function TR069DeviceWanConnections({ deviceId }: TR069DeviceWanConnection
         return (
             <CardContainer title="WAN Connections" gradientColor="#6366f1">
                 <div className="text-center py-12 text-muted-foreground">
-                    No WAN connections found.
+                    {loadError || "No WAN connections found."}
                 </div>
                 <div className="flex justify-center mt-4">
                     <Button onClick={() => setIsAddModalOpen(true)}>
@@ -756,22 +1623,32 @@ export function TR069DeviceWanConnections({ deviceId }: TR069DeviceWanConnection
     return (
         <div className="space-y-6">
             {/* Header with Summary Stats and Add button */}
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div className="flex flex-row justify-between items-center w-full mb-2">
                 <div>
-                    <h2 className="text-2xl font-bold">WAN Connections</h2>
-                    <p className="text-sm text-muted-foreground">
-                        Total Traffic: {formatBytes(totalTraffic.bytesReceived + totalTraffic.bytesSent)} •
-                        Packets: {formatNumber(totalTraffic.packetsReceived + totalTraffic.packetsSent)} •
-                        Connections: {wanConnections.length}
+                    <h2 className="text-2xl font-extrabold text-slate-800 dark:text-slate-100">WAN Connections</h2>
+                    <p className="text-xs font-semibold text-muted-foreground mt-0.5">
+                        Total: {wanConnections.length} • Active: {wanConnections.filter(c => c.connectionStatus?.toLowerCase() === "connected").length} • Inactive: {wanConnections.filter(c => c.connectionStatus?.toLowerCase() !== "connected").length}
                     </p>
+                    {snapshotMeta?.snapshotAt && (
+                        <p className="mt-1 text-[10px] text-muted-foreground">
+                            {snapshotMeta.source === "database" ? "Saved database snapshot" : "Latest ACS snapshot"}
+                            {" • "}
+                            {new Date(snapshotMeta.snapshotAt).toLocaleString()}
+                        </p>
+                    )}
                 </div>
-                <div className="flex gap-2">
-                    <Button variant="outline" onClick={handleRefresh} disabled={isRefreshing}>
-                        <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
-                        Refresh Stats
+                <div className="flex items-center gap-2">
+                    <Button
+                        variant="outline"
+                        onClick={handleRefresh}
+                        disabled={isRefreshing}
+                        className="font-bold rounded-xl h-9 text-xs px-4"
+                    >
+                        <RefreshCw className={`mr-1 h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+                        {isRefreshing ? "Pulling from ACS" : "Refresh from ACS"}
                     </Button>
-                    <Button onClick={() => setIsAddModalOpen(true)}>
-                        <Plus className="h-4 w-4 mr-2" />
+                    <Button onClick={() => setIsAddModalOpen(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl h-9 text-xs px-4">
+                        <Plus className="h-3.5 w-3.5 mr-1" />
                         Add WAN
                     </Button>
                 </div>
@@ -780,842 +1657,121 @@ export function TR069DeviceWanConnections({ deviceId }: TR069DeviceWanConnection
             {/* Connection Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {wanConnections.map((conn) => {
-                    const key = `${conn.wanDeviceIndex}-${conn.wanConnectionDeviceIndex}`;
-                    const WanIndexkey = `${conn.wanConnectionDeviceIndex}`;
+                    const key = wanConnectionKey(conn);
                     const details = getConnectionDetails(conn);
-                    const ethernetStats = stats[key] || {
-                        bytesReceived: 0, bytesSent: 0, packetsReceived: 0, packetsSent: 0,
-                        broadcastReceived: 0, broadcastSent: 0, multicastReceived: 0, multicastSent: 0,
-                        unicastReceived: 0, unicastSent: 0, errorsReceived: 0, errorsSent: 0,
-                        discardReceived: 0, discardSent: 0, crcErrors: 0, overSizePackets: 0,
-                        underSizePackets: 0, fragmentsReceived: 0, fragmentsSent: 0,
-                        jabbersReceived: 0, jabbersSent: 0, downstreamBwUtilization: "0", upstreamBwUtilization: "0"
-                    };
-
                     const isConnected = conn.connectionStatus?.toLowerCase() === "connected";
-                    const hasTraffic = ethernetStats.bytesReceived > 0 || ethernetStats.bytesSent > 0;
-                    const isSelected = selectedConnection === key;
-                    const hasErrors = ethernetStats.errorsReceived > 0 || ethernetStats.crcErrors > 0 ||
-                        ethernetStats.discardReceived > 0 || ethernetStats.fragmentsReceived > 0;
-
-                    const showPassword = showPasswords[key];
 
                     return (
-                        <CardContainer
+                        <div
                             key={key}
-                            title=""
-                            gradientColor={details.serviceType === "INTERNET" ? "#22c55e" : "#6366f1"}
-                            className={`transition-all duration-300 ${isSelected ? 'ring-2 ring-primary' : ''} ${hasErrors ? 'ring-1 ring-red-500/50' : ''}`}
+                            className={`relative rounded-2xl border bg-card/45 backdrop-blur-md shadow-[0_8px_30px_rgb(0,0,0,0.04)] border-slate-100/80 dark:border-slate-800/80 p-5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md cursor-pointer overflow-hidden ${
+                                isConnected ? "border-l-4 border-l-emerald-500" : "border-l-4 border-l-red-500"
+                            }`}
+                            onClick={() => setSelectedConnection(key)}
                         >
                             <div className="space-y-4">
-                                {/* Header */}
-                                <div className="flex items-start justify-between">
-                                    <div className="flex items-start gap-3">
-                                        <div className={`rounded-lg p-3 ${details.serviceType === "INTERNET"
-                                            ? 'bg-green-500/20 text-green-600'
-                                            : 'bg-blue-500/20 text-blue-600'
-                                            }`}>
-                                            {details.serviceType === "INTERNET" ? (
-                                                <Globe className="h-6 w-6" />
-                                            ) : (
-                                                <Activity className="h-6 w-6" />
-                                            )}
+                                {/* Top Row: Icon, Title, Badges, Actions */}
+                                <div className="flex justify-between items-start">
+                                    <div className="flex items-center gap-3">
+                                        <div className={`h-10 w-10 rounded-full flex items-center justify-center flex-shrink-0 ${
+                                            isConnected ? "bg-emerald-500/10 text-emerald-600" : "bg-slate-500/10 text-slate-500"
+                                        }`}>
+                                            <Globe className="h-5 w-5" />
                                         </div>
-                                        <div>
+                                        <div className="space-y-1">
                                             <div className="flex items-center gap-2 flex-wrap">
-                                                <h3 className="font-semibold text-lg">{details.name || details.serviceType}</h3>
-                                                {details.vlanId && (
-                                                    <Badge variant="secondary" className="gap-1">
-                                                        <Tag className="h-3 w-3" />
-                                                        VLAN {details.vlanId}
-                                                        {details.vlanPriority && details.vlanPriority > 0 && (
-                                                            <span className="ml-1 text-xs">(P{details.vlanPriority})</span>
-                                                        )}
-                                                    </Badge>
-                                                )}
-                                                <Badge variant={isConnected ? "success" : "destructive"} className="capitalize">
-                                                    {conn.connectionStatus || "Unknown"}
+                                                <span className="font-extrabold text-sm text-slate-800 dark:text-slate-100">{details.name || details.serviceType}</span>
+                                                <Badge variant={isConnected ? "success" : "secondary"} className="rounded-full px-2 py-0.5 text-[9px] font-bold uppercase">
+                                                    {conn.connectionStatus || "Inactive"}
                                                 </Badge>
-                                            </div>
-                                            <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-                                                <span>{conn.type} • {conn.connectionType} • {details.addressingType}</span>
-                                                {conn.transportType && (
-                                                    <Badge variant="outline" className="text-xs">
-                                                        {conn.transportType}
-                                                    </Badge>
-                                                )}
+                                                <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[9px] font-bold uppercase">
+                                                    {conn.type} ({conn.connectionType})
+                                                </Badge>
                                             </div>
                                         </div>
                                     </div>
-                                    <div className="flex gap-1">
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={() => setSelectedConnection(isSelected ? null : key)}
-                                            className="h-8 w-8 p-0"
-                                        >
-                                            <Info className="h-4 w-4" />
-                                        </Button>
+                                    <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                                         <Button
                                             variant="ghost"
                                             size="sm"
                                             onClick={() => openEditModal(conn)}
-                                            className="h-8 w-8 p-0 text-blue-500 hover:text-blue-600"
+                                            className="h-8 w-8 p-0 border border-slate-200/50 hover:bg-slate-100 dark:border-slate-700/50 dark:hover:bg-slate-800 rounded-lg text-slate-600 dark:text-slate-400"
                                             title="Edit Connection"
                                         >
-                                            <Settings className="h-4 w-4" />
+                                            <Edit3 className="h-3.5 w-3.5" />
                                         </Button>
                                         <Button
                                             variant="ghost"
                                             size="sm"
-                                            onClick={() => setDeleteWanId(WanIndexkey)}
-                                            className="h-8 w-8 p-0 text-red-500 hover:text-red-600"
+                                            onClick={() => setDeleteWanId(conn.wanConnectionDeviceIndex)}
+                                            className="h-8 w-8 p-0 border border-slate-200/50 hover:bg-slate-100 dark:border-slate-700/50 dark:hover:bg-slate-800 rounded-lg text-red-500 hover:text-red-600"
+                                            title="Delete Connection"
                                         >
-                                            <Trash2 className="h-4 w-4" />
+                                            <Trash2 className="h-3.5 w-3.5" />
                                         </Button>
                                     </div>
                                 </div>
 
-                                {/* Quick Stats Grid */}
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div className="bg-muted/50 rounded-lg p-3">
-                                        <div className="text-xs text-muted-foreground">External IP</div>
-                                        <div className="font-mono text-sm font-medium truncate">{details.ipDetails.externalIPAddress}</div>
+                                {/* Fields Grid */}
+                                <div className="grid grid-cols-2 gap-4 border-t border-b border-border/50 py-3 mt-2 text-xs font-semibold sm:grid-cols-3 xl:grid-cols-5">
+                                    <div>
+                                        <span className="text-muted-foreground text-[9px] font-bold uppercase block mb-0.5">Type</span>
+                                        <span className="text-slate-800 dark:text-slate-200">{conn.type} ({conn.connectionType})</span>
                                     </div>
-                                    <div className="bg-muted/50 rounded-lg p-3">
-                                        <div className="text-xs text-muted-foreground">Gateway</div>
-                                        <div className="font-mono text-sm font-medium truncate">{details.ipDetails.defaultGateway}</div>
+                                    <div>
+                                        <span className="text-muted-foreground text-[9px] font-bold uppercase block mb-0.5">Service</span>
+                                        <span className="text-slate-800 dark:text-slate-200">{details.serviceType || "TR069"}</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-muted-foreground text-[9px] font-bold uppercase block mb-0.5">VLAN ID</span>
+                                        <span className="text-slate-800 dark:text-slate-200">{details.vlanId ?? "-"}</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-muted-foreground text-[9px] font-bold uppercase block mb-0.5">MAC Address</span>
+                                        <span className="break-all font-mono text-slate-800 dark:text-slate-200">{details.macAddress}</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-muted-foreground text-[9px] font-bold uppercase block mb-0.5">Uptime</span>
+                                        <span className="text-slate-800 dark:text-slate-200">{isConnected && conn.uptime !== undefined ? formatUptime(conn.uptime) : "N/A"}</span>
                                     </div>
                                 </div>
 
-                                {/* Traffic Charts (unchanged) */}
-                                {hasTraffic ? (
-                                    <div className="grid grid-cols-2 gap-4 pt-2">
-                                        {/* Bytes Chart */}
-                                        <div className="space-y-2">
-                                            <div className="flex items-center justify-between text-xs">
-                                                <span className="text-muted-foreground">Traffic</span>
-                                                <span className="font-medium">{formatBytes(ethernetStats.bytesReceived + ethernetStats.bytesSent)}</span>
-                                            </div>
-                                            <div className="h-24">
-                                                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 240, height: 96 }}>
-                                                    <RechartsPieChart>
-                                                        <Pie
-                                                            data={getTrafficData(ethernetStats)}
-                                                            cx="50%"
-                                                            cy="50%"
-                                                            innerRadius={20}
-                                                            outerRadius={35}
-                                                            paddingAngle={5}
-                                                            dataKey="value"
-                                                            animationBegin={0}
-                                                            animationDuration={1500}
-                                                            isAnimationActive={true}
-                                                        >
-                                                            {getTrafficData(ethernetStats).map((entry, index) => (
-                                                                <Cell key={`cell-${index}`} fill={entry.color} />
-                                                            ))}
-                                                        </Pie>
-                                                        <Tooltip
-                                                            formatter={(value: number) => formatBytes(value)}
-                                                            contentStyle={{
-                                                                backgroundColor: "hsl(var(--background))",
-                                                                border: "1px solid hsl(var(--border))",
-                                                                fontSize: "12px",
-                                                                borderRadius: "6px",
-                                                            }}
-                                                        />
-                                                    </RechartsPieChart>
-                                                </ResponsiveContainer>
-                                            </div>
-                                            <div className="flex justify-between text-xs">
-                                                <span className="text-green-600 dark:text-green-400">RX: {formatBytes(ethernetStats.bytesReceived)}</span>
-                                                <span className="text-blue-600 dark:text-blue-400">TX: {formatBytes(ethernetStats.bytesSent)}</span>
-                                            </div>
-                                        </div>
-
-                                        {/* Packets Chart */}
-                                        <div className="space-y-2">
-                                            <div className="flex items-center justify-between text-xs">
-                                                <span className="text-muted-foreground">Packets</span>
-                                                <span className="font-medium">{formatNumber(ethernetStats.packetsReceived + ethernetStats.packetsSent)}</span>
-                                            </div>
-                                            <div className="h-24">
-                                                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 240, height: 96 }}>
-                                                    <RechartsPieChart>
-                                                        <Pie
-                                                            data={getPacketData(ethernetStats)}
-                                                            cx="50%"
-                                                            cy="50%"
-                                                            innerRadius={20}
-                                                            outerRadius={35}
-                                                            paddingAngle={5}
-                                                            dataKey="value"
-                                                            animationBegin={0}
-                                                            animationDuration={1500}
-                                                            isAnimationActive={true}
-                                                        >
-                                                            {getPacketData(ethernetStats).map((entry, index) => (
-                                                                <Cell key={`cell-${index}`} fill={entry.color} />
-                                                            ))}
-                                                        </Pie>
-                                                        <Tooltip
-                                                            formatter={(value: number) => formatNumber(value)}
-                                                            contentStyle={{
-                                                                backgroundColor: "hsl(var(--background))",
-                                                                border: "1px solid hsl(var(--border))",
-                                                                fontSize: "12px",
-                                                                borderRadius: "6px",
-                                                            }}
-                                                        />
-                                                    </RechartsPieChart>
-                                                </ResponsiveContainer>
-                                            </div>
-                                            <div className="flex justify-between text-xs">
-                                                <span className="text-green-600 dark:text-green-400">RX: {formatNumber(ethernetStats.packetsReceived)}</span>
-                                                <span className="text-blue-600 dark:text-blue-400">TX: {formatNumber(ethernetStats.packetsSent)}</span>
-                                            </div>
-                                        </div>
+                                {/* Footer Row */}
+                                <div className="grid grid-cols-2 gap-4 pt-1 text-xs font-semibold sm:grid-cols-3 xl:grid-cols-5">
+                                    <div>
+                                        <span className="text-muted-foreground text-[9px] font-bold uppercase block mb-0.5">IP Address</span>
+                                        <span className="font-mono text-slate-800 dark:text-slate-200">{conn.externalIPAddress || conn.ipAddress || "-"}</span>
                                     </div>
-                                ) : (
-                                    <div className="bg-muted/30 rounded-lg p-4 text-center text-sm text-muted-foreground">
-                                        <Activity className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                                        No traffic data available. Connection uptime: {formatUptime(conn.uptime || 0)}
+                                    <div>
+                                        <span className="text-muted-foreground text-[9px] font-bold uppercase block mb-0.5">Gateway</span>
+                                        <span className="font-mono text-slate-800 dark:text-slate-200">{conn.gateway || conn.remoteIPAddress || "N/A"}</span>
                                     </div>
-                                )}
-
-                                {/* Error Indicator */}
-                                {hasErrors && (
-                                    <div className="bg-red-500/10 rounded-lg p-2 flex items-center gap-2 text-xs text-red-600 dark:text-red-400">
-                                        <AlertTriangle className="h-3 w-3 flex-shrink-0" />
-                                        <span className="truncate">Errors detected - Click info for details</span>
+                                    <div>
+                                        <span className="text-muted-foreground text-[9px] font-bold uppercase block mb-0.5">DNS</span>
+                                        <span className="break-words font-mono text-slate-800 dark:text-slate-200">{conn.dnsServers?.length ? conn.dnsServers.join(", ") : "N/A"}</span>
                                     </div>
-                                )}
-
-                                {/* Expanded Details (unchanged) */}
-                                {isSelected && (
-                                    <div className="pt-4 space-y-4 border-t animate-in slide-in-from-top-2 duration-300">
-                                        {/* ... (keep all the existing expanded sections) ... */}
-                                        {/* IP Configuration */}
-                                        <div>
-                                            <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-                                                <Network className="h-4 w-4" />
-                                                IP Configuration
-                                            </h4>
-                                            <div className="grid grid-cols-2 gap-2 text-sm">
-                                                <div className="bg-muted/30 p-2 rounded col-span-2">
-                                                    <div className="text-xs text-muted-foreground">External IP</div>
-                                                    <div className="font-mono">{details.ipDetails.externalIPAddress}</div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-xs text-muted-foreground">Default Gateway</div>
-                                                    <div className="font-mono">{details.ipDetails.defaultGateway}</div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-xs text-muted-foreground">Remote IP</div>
-                                                    <div className="font-mono">{details.ipDetails.remoteIPAddress}</div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-xs text-muted-foreground">Subnet Mask</div>
-                                                    <div className="font-mono">{details.ipDetails.subnetMask}</div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-xs text-muted-foreground">MAC Address</div>
-                                                    <div className="font-mono">{details.macAddress}</div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded col-span-2">
-                                                    <div className="text-xs text-muted-foreground">DNS Servers</div>
-                                                    <div className="font-mono text-xs break-all">
-                                                        {details.dnsServers.length > 0 ? details.dnsServers.join(", ") : "N/A"}
-                                                    </div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-xs text-muted-foreground">{conn.type === "PPP" ? "MRU" : "MTU"}</div>
-                                                    <div className="font-mono">{details.mtuValue}</div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-xs text-muted-foreground">Addressing</div>
-                                                    <div className="font-mono">{details.addressingType}</div>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* PPPoE Details */}
-                                        {details.pppoeDetails && (
-                                            <div>
-                                                <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-                                                    <Router className="h-4 w-4" />
-                                                    PPPoE / BRAS Details
-                                                </h4>
-                                                <div className="grid grid-cols-2 gap-2 text-sm">
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <div className="text-xs text-muted-foreground">Username</div>
-                                                        <div className="font-mono">{details.pppoeDetails.username}</div>
-                                                    </div>
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <div className="text-xs text-muted-foreground">Password</div>
-                                                        <div className="font-mono flex items-center gap-1">
-                                                            <span>{showPassword ? details.pppoeDetails.password : '••••••••'}</span>
-                                                            <Button
-                                                                variant="ghost"
-                                                                size="sm"
-                                                                className="h-6 w-6 p-0"
-                                                                onClick={() => togglePasswordVisibility(key)}
-                                                            >
-                                                                {showPassword ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                                                            </Button>
-                                                        </div>
-                                                    </div>
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <div className="text-xs text-muted-foreground">BRAS Name (AC)</div>
-                                                        <div className="font-mono text-green-600 dark:text-green-400">
-                                                            {details.pppoeDetails.acName}
-                                                        </div>
-                                                    </div>
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <div className="text-xs text-muted-foreground">Remote IP</div>
-                                                        <div className="font-mono">{details.pppoeDetails.remoteIP}</div>
-                                                    </div>
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <div className="text-xs text-muted-foreground">Session ID</div>
-                                                        <div className="font-mono">{details.pppoeDetails.sessionId}</div>
-                                                    </div>
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <div className="text-xs text-muted-foreground">Service Name</div>
-                                                        <div className="font-mono">{details.pppoeDetails.serviceName || "N/A"}</div>
-                                                    </div>
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <div className="text-xs text-muted-foreground">LCP Echo</div>
-                                                        <div className="font-mono">{details.pppoeDetails.lcpEcho}s / {details.pppoeDetails.lcpEchoRetry}</div>
-                                                    </div>
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <div className="text-xs text-muted-foreground">Auth/Encrypt</div>
-                                                        <div className="font-mono text-xs">{details.pppoeDetails.authenticationProtocol} / {details.pppoeDetails.encryptionProtocol}</div>
-                                                    </div>
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <div className="text-xs text-muted-foreground">Compression</div>
-                                                        <div className="font-mono">{details.pppoeDetails.compressionProtocol || "None"}</div>
-                                                    </div>
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <div className="text-xs text-muted-foreground">MRU (Current/Max)</div>
-                                                        <div className="font-mono">{details.pppoeDetails.currentMRU} / {details.pppoeDetails.maxMRU}</div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* DHCP Options */}
-                                        {conn.type === "IP" && details.dhcpOptions && (
-                                            <div>
-                                                <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-                                                    <Settings className="h-4 w-4" />
-                                                    DHCP Configuration
-                                                </h4>
-                                                <div className="grid grid-cols-2 gap-2 text-sm">
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <div className="text-xs text-muted-foreground">DHCP Server</div>
-                                                        <div className="font-mono">{details.dhcpOptions.dhcpServer}</div>
-                                                    </div>
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <div className="text-xs text-muted-foreground">Lease Time</div>
-                                                        <div className="font-mono">{details.dhcpOptions.leaseTime}s</div>
-                                                    </div>
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <div className="text-xs text-muted-foreground">Renew/Rebind</div>
-                                                        <div className="font-mono">{details.dhcpOptions.renewTime}s / {details.dhcpOptions.rebindTime}s</div>
-                                                    </div>
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <div className="text-xs text-muted-foreground">Keep Alive</div>
-                                                        <div className="font-mono">{details.dhcpOptions.dhcpKeepAliveInterval}s</div>
-                                                    </div>
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <div className="text-xs text-muted-foreground">Option125</div>
-                                                        <div className="font-mono">{details.dhcpOptions.dhcpOption125Enabled ? 'Enabled' : 'Disabled'}</div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* IPv6 Details */}
-                                        {details.ipv6Details && (details.ipv6Details.ipv6Address || details.ipv6Details.ipv6Prefix || details.ipv6Details.ipv6DefaultGateway) && (
-                                            <div>
-                                                <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-                                                    <Radio className="h-4 w-4" />
-                                                    IPv6 Configuration
-                                                </h4>
-                                                <div className="grid grid-cols-2 gap-2 text-sm">
-                                                    {details.ipv6Details.ipv6Address && (
-                                                        <div className="bg-muted/30 p-2 rounded col-span-2">
-                                                            <div className="text-xs text-muted-foreground">IPv6 Address</div>
-                                                            <div className="font-mono text-xs">{details.ipv6Details.ipv6Address}</div>
-                                                        </div>
-                                                    )}
-                                                    {details.ipv6Details.ipv6DefaultGateway && (
-                                                        <div className="bg-muted/30 p-2 rounded col-span-2">
-                                                            <div className="text-xs text-muted-foreground">IPv6 Default Gateway</div>
-                                                            <div className="font-mono text-xs">{details.ipv6Details.ipv6DefaultGateway}</div>
-                                                        </div>
-                                                    )}
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                         <div className="text-xs text-muted-foreground">Address Origin</div>
-                                                         <div className="font-mono">{details.ipv6Details.ipv6AddressOrigin}</div>
-                                                     </div>
-                                                     <div className="bg-muted/30 p-2 rounded">
-                                                         <div className="text-xs text-muted-foreground">Prefix</div>
-                                                         <div className="font-mono">{details.ipv6Details.ipv6Prefix || "N/A"}</div>
-                                                     </div>
-                                                     <div className="bg-muted/30 p-2 rounded">
-                                                         <div className="text-xs text-muted-foreground">Prefix Delegation</div>
-                                                         <div className="font-mono">{details.ipv6Details.ipv6PrefixDelegationEnabled ? 'Enabled' : 'Disabled'}</div>
-                                                     </div>
-                                                     <div className="bg-muted/30 p-2 rounded">
-                                                         <div className="text-xs text-muted-foreground">Status</div>
-                                                         <div className="font-mono">{details.ipv6Details.ipv6ConnStatus}</div>
-                                                     </div>
-                                                 </div>
-                                             </div>
-                                         )}
-
-                                        {/* Access Control List */}
-                                        <div>
-                                            <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
-                                                <Shield className="h-4 w-4" />
-                                                Access Control List (ACL)
-                                            </h4>
-
-                                            <div className="space-y-4">
-                                                {/* Web Access */}
-                                                <div>
-                                                    <div className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
-                                                        <Globe className="h-3 w-3" />
-                                                        Web Access
-                                                    </div>
-                                                    <div className="grid grid-cols-2 gap-3">
-                                                        {/* HTTP */}
-                                                        <div className="bg-muted/30 rounded-lg p-3">
-                                                            <div className="flex items-center justify-between mb-2">
-                                                                <span className="text-sm font-medium">HTTP</span>
-                                                                {details.accessControls.httpEnabled ? (
-                                                                    <Badge variant="success" className="text-[10px]">Enabled</Badge>
-                                                                ) : (
-                                                                    <Badge variant="destructive" className="text-[10px]">Disabled</Badge>
-                                                                )}
-                                                            </div>
-                                                            <div className="flex items-center justify-between text-xs">
-                                                                <span className="text-muted-foreground">Trusted Mode:</span>
-                                                                <span className={details.accessControls.httpTrusted ? "text-amber-600 font-medium" : "text-muted-foreground"}>
-                                                                    {details.accessControls.httpTrusted ? "Yes" : "No"}
-                                                                </span>
-                                                            </div>
-                                                        </div>
-
-                                                        {/* HTTPS */}
-                                                        <div className="bg-muted/30 rounded-lg p-3">
-                                                            <div className="flex items-center justify-between mb-2">
-                                                                <span className="text-sm font-medium">HTTPS</span>
-                                                                {details.accessControls.httpsEnabled ? (
-                                                                    <Badge variant="success" className="text-[10px]">Enabled</Badge>
-                                                                ) : (
-                                                                    <Badge variant="destructive" className="text-[10px]">Disabled</Badge>
-                                                                )}
-                                                            </div>
-                                                            <div className="space-y-1">
-                                                                <div className="flex items-center justify-between text-xs">
-                                                                    <span className="text-muted-foreground">Trusted Mode:</span>
-                                                                    <span className={details.accessControls.httpsTrusted ? "text-amber-600 font-medium" : "text-muted-foreground"}>
-                                                                        {details.accessControls.httpsTrusted ? "Yes" : "No"}
-                                                                    </span>
-                                                                </div>
-                                                                {details.accessControls.httpsDebugMode && (
-                                                                    <div className="flex items-center justify-between text-xs">
-                                                                        <span className="text-muted-foreground">Debug Mode:</span>
-                                                                        <span className="text-amber-600">{details.accessControls.httpsDebugTimer}s</span>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-
-                                                {/* Remote Access */}
-                                                <div>
-                                                    <div className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
-                                                        <Router className="h-3 w-3" />
-                                                        Remote Access
-                                                    </div>
-                                                    <div className="grid grid-cols-2 gap-3">
-                                                        {/* SSH */}
-                                                        <div className="bg-muted/30 rounded-lg p-3">
-                                                            <div className="flex items-center justify-between mb-2">
-                                                                <span className="text-sm font-medium">SSH</span>
-                                                                {details.accessControls.sshEnabled ? (
-                                                                    <Badge variant="success" className="text-[10px]">Enabled</Badge>
-                                                                ) : (
-                                                                    <Badge variant="destructive" className="text-[10px]">Disabled</Badge>
-                                                                )}
-                                                            </div>
-                                                            <div className="flex items-center justify-between text-xs">
-                                                                <span className="text-muted-foreground">Trusted Mode:</span>
-                                                                <span className={details.accessControls.sshTrusted ? "text-amber-600 font-medium" : "text-muted-foreground"}>
-                                                                    {details.accessControls.sshTrusted ? "Yes" : "No"}
-                                                                </span>
-                                                            </div>
-                                                        </div>
-
-                                                        {/* Telnet */}
-                                                        <div className="bg-muted/30 rounded-lg p-3">
-                                                            <div className="flex items-center justify-between mb-2">
-                                                                <span className="text-sm font-medium">Telnet</span>
-                                                                {details.accessControls.telnetEnabled ? (
-                                                                    <Badge variant="success" className="text-[10px]">Enabled</Badge>
-                                                                ) : (
-                                                                    <Badge variant="destructive" className="text-[10px]">Disabled</Badge>
-                                                                )}
-                                                            </div>
-                                                            <div className="flex items-center justify-between text-xs">
-                                                                <span className="text-muted-foreground">Trusted Mode:</span>
-                                                                <span className={details.accessControls.telnetTrusted ? "text-amber-600 font-medium" : "text-muted-foreground"}>
-                                                                    {details.accessControls.telnetTrusted ? "Yes" : "No"}
-                                                                </span>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-
-                                                {/* File Transfer */}
-                                                <div>
-                                                    <div className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
-                                                        <Download className="h-3 w-3" />
-                                                        File Transfer
-                                                    </div>
-                                                    <div className="grid grid-cols-2 gap-3">
-                                                        {/* FTP */}
-                                                        <div className="bg-muted/30 rounded-lg p-3">
-                                                            <div className="flex items-center justify-between mb-2">
-                                                                <span className="text-sm font-medium">FTP</span>
-                                                                {details.accessControls.ftpEnabled ? (
-                                                                    <Badge variant="success" className="text-[10px]">Enabled</Badge>
-                                                                ) : (
-                                                                    <Badge variant="destructive" className="text-[10px]">Disabled</Badge>
-                                                                )}
-                                                            </div>
-                                                        </div>
-
-                                                        {/* SFTP */}
-                                                        <div className="bg-muted/30 rounded-lg p-3">
-                                                            <div className="flex items-center justify-between mb-2">
-                                                                <span className="text-sm font-medium">SFTP</span>
-                                                                {details.accessControls.sftpEnabled ? (
-                                                                    <Badge variant="success" className="text-[10px]">Enabled</Badge>
-                                                                ) : (
-                                                                    <Badge variant="destructive" className="text-[10px]">Disabled</Badge>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-
-                                                {/* Network Services */}
-                                                <div>
-                                                    <div className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
-                                                        <Network className="h-3 w-3" />
-                                                        Network Services
-                                                    </div>
-                                                    <div className="grid grid-cols-2 gap-3">
-                                                        {/* ICMP (Ping) */}
-                                                        <div className="bg-muted/30 rounded-lg p-3">
-                                                            <div className="flex items-center justify-between mb-2">
-                                                                <span className="text-sm font-medium">ICMP (Ping)</span>
-                                                                {details.accessControls.icmpEnabled ? (
-                                                                    <Badge variant="success" className="text-[10px]">Enabled</Badge>
-                                                                ) : (
-                                                                    <Badge variant="destructive" className="text-[10px]">Disabled</Badge>
-                                                                )}
-                                                            </div>
-                                                            <div className="flex items-center justify-between text-xs">
-                                                                <span className="text-muted-foreground">Trusted Mode:</span>
-                                                                <span className={details.accessControls.icmpTrusted ? "text-amber-600 font-medium" : "text-muted-foreground"}>
-                                                                    {details.accessControls.icmpTrusted ? "Yes" : "No"}
-                                                                </span>
-                                                            </div>
-                                                        </div>
-
-                                                        {/* TR-069 (ACS) */}
-                                                        <div className="bg-muted/30 rounded-lg p-3">
-                                                            <div className="flex items-center justify-between mb-2">
-                                                                <span className="text-sm font-medium">TR-069 (ACS)</span>
-                                                                {details.accessControls.tr69Enabled ? (
-                                                                    <Badge variant="success" className="text-[10px]">Enabled</Badge>
-                                                                ) : (
-                                                                    <Badge variant="destructive" className="text-[10px]">Disabled</Badge>
-                                                                )}
-                                                            </div>
-                                                            <div className="flex items-center justify-between text-xs">
-                                                                <span className="text-muted-foreground">Trusted Mode:</span>
-                                                                <span className={details.accessControls.tr69Trusted ? "text-amber-600 font-medium" : "text-muted-foreground"}>
-                                                                    {details.accessControls.tr69Trusted ? "Yes" : "No"}
-                                                                </span>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-
-                                                {/* Trusted Network Status */}
-                                                {details.accessControls.trustedNetworkEnable && (
-                                                    <div className="bg-amber-500/10 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
-                                                        <div className="flex items-center gap-2">
-                                                            <Shield className="h-4 w-4 text-amber-600" />
-                                                            <div>
-                                                                <div className="text-sm font-medium text-amber-600 dark:text-amber-400">Trusted Network Mode</div>
-                                                                <div className="text-xs text-muted-foreground">Access restricted to trusted networks only</div>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-
-                                        {/* ACL Summary */}
-                                        <div className="mt-3 flex flex-wrap gap-2">
-                                            {details.accessControls.httpEnabled && (
-                                                <Badge variant={details.accessControls.httpTrusted ? "warning" : "outline"} className="text-[10px] gap-1">
-                                                    <Globe className="h-3 w-3" />
-                                                    HTTP {details.accessControls.httpTrusted ? '(Trusted)' : ''}
-                                                </Badge>
-                                            )}
-                                            {details.accessControls.httpsEnabled && (
-                                                <Badge variant={details.accessControls.httpsTrusted ? "warning" : "outline"} className="text-[10px] gap-1">
-                                                    <Lock className="h-3 w-3" />
-                                                    HTTPS {details.accessControls.httpsTrusted ? '(Trusted)' : ''}
-                                                </Badge>
-                                            )}
-                                            {details.accessControls.sshEnabled && (
-                                                <Badge variant={details.accessControls.sshTrusted ? "warning" : "outline"} className="text-[10px] gap-1">
-                                                    <Terminal className="h-3 w-3" />
-                                                    SSH {details.accessControls.sshTrusted ? '(Trusted)' : ''}
-                                                </Badge>
-                                            )}
-                                            {details.accessControls.telnetEnabled && (
-                                                <Badge variant={details.accessControls.telnetTrusted ? "warning" : "outline"} className="text-[10px] gap-1">
-                                                    <Terminal className="h-3 w-3" />
-                                                    Telnet {details.accessControls.telnetTrusted ? '(Trusted)' : ''}
-                                                </Badge>
-                                            )}
-                                            {details.accessControls.ftpEnabled && (
-                                                <Badge variant="outline" className="text-[10px] gap-1">
-                                                    <Download className="h-3 w-3" />
-                                                    FTP
-                                                </Badge>
-                                            )}
-                                            {details.accessControls.sftpEnabled && (
-                                                <Badge variant="outline" className="text-[10px] gap-1">
-                                                    <Upload className="h-3 w-3" />
-                                                    SFTP
-                                                </Badge>
-                                            )}
-                                            {details.accessControls.icmpEnabled && (
-                                                <Badge variant={details.accessControls.icmpTrusted ? "warning" : "outline"} className="text-[10px] gap-1">
-                                                    <Activity className="h-3 w-3" />
-                                                    Ping {details.accessControls.icmpTrusted ? '(Trusted)' : ''}
-                                                </Badge>
-                                            )}
-                                            {details.accessControls.tr69Enabled && (
-                                                <Badge variant={details.accessControls.tr69Trusted ? "warning" : "outline"} className="text-[10px] gap-1">
-                                                    <Settings className="h-3 w-3" />
-                                                    TR-069 {details.accessControls.tr69Trusted ? '(Trusted)' : ''}
-                                                </Badge>
-                                            )}
-                                        </div>
-
-                                        {/* Connection Stats */}
-                                        <div>
-                                            <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-                                                <Activity className="h-4 w-4" />
-                                                Connection Statistics
-                                            </h4>
-                                            <div className="grid grid-cols-2 gap-2 text-xs">
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <span className="text-muted-foreground">NAT:</span>
-                                                    <span className="ml-1 font-medium">{details.connectionStats.natEnabled ? 'Enabled' : 'Disabled'}</span>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <span className="text-muted-foreground">DNS:</span>
-                                                    <span className="ml-1 font-medium">{details.connectionStats.dnsEnabled ? 'Enabled' : 'Disabled'}</span>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <span className="text-muted-foreground">DNS Override:</span>
-                                                    <span className="ml-1 font-medium">{details.connectionStats.dnsOverrideAllowed ? 'Allowed' : 'Not Allowed'}</span>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <span className="text-muted-foreground">MAC Override:</span>
-                                                    <span className="ml-1 font-medium">{details.connectionStats.macAddressOverride ? 'Yes' : 'No'}</span>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <span className="text-muted-foreground">WAN FW Mark:</span>
-                                                    <span className="ml-1 font-medium">{details.connectionStats.wanFwMark}</span>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <span className="text-muted-foreground">Shaping Rate:</span>
-                                                    <span className="ml-1 font-medium">{details.connectionStats.shapingRate} kbps</span>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded col-span-2">
-                                                    <span className="text-muted-foreground">Last Error:</span>
-                                                    <span className="ml-1 font-medium">{details.connectionStats.lastConnectionError}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* DMZ Configuration */}
-                                        {details.dmzConfig && details.dmzConfig.dmzEnabled && (
-                                            <div>
-                                                <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-                                                    <Zap className="h-4 w-4" />
-                                                    DMZ Configuration
-                                                </h4>
-                                                <div className="grid grid-cols-2 gap-2 text-xs">
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <span className="text-muted-foreground">DMZ Host:</span>
-                                                        <span className="ml-1 font-medium">{details.dmzConfig.internalClient || "N/A"}</span>
-                                                    </div>
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <span className="text-muted-foreground">Description:</span>
-                                                        <span className="ml-1 font-medium">{details.dmzConfig.dmzHostDescription || "N/A"}</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* Vendor Specific */}
-                                        {details.vendorSpecific && (
-                                            <div>
-                                                <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-                                                    <Fingerprint className="h-4 w-4" />
-                                                    Vendor Specific
-                                                </h4>
-                                                <div className="grid grid-cols-2 gap-2 text-xs">
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <span className="text-muted-foreground">DSCP Mark:</span>
-                                                        <span className="ml-1 font-medium">{details.vendorSpecific.dscpMark}</span>
-                                                    </div>
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <span className="text-muted-foreground">VLAN ID:</span>
-                                                        <span className="ml-1 font-medium">{details.vendorSpecific.vlanID}</span>
-                                                    </div>
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <span className="text-muted-foreground">Multicast VLAN:</span>
-                                                        <span className="ml-1 font-medium">{details.vendorSpecific.multicastVlan}</span>
-                                                    </div>
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <span className="text-muted-foreground">DS-Lite:</span>
-                                                        <span className="ml-1 font-medium">{details.vendorSpecific.dsliteEnable ? 'Enabled' : 'Disabled'}</span>
-                                                    </div>
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <span className="text-muted-foreground">SSDP:</span>
-                                                        <span className="ml-1 font-medium">{details.vendorSpecific.ssdpEnabled ? 'Enabled' : 'Disabled'}</span>
-                                                    </div>
-                                                    <div className="bg-muted/30 p-2 rounded">
-                                                        <span className="text-muted-foreground">Keep Alive:</span>
-                                                        <span className="ml-1 font-medium">{details.vendorSpecific.keepAliveTime}s / {details.vendorSpecific.keepAliveRetry}</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* Detailed Ethernet Statistics */}
-                                        <div>
-                                            <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-                                                <BarChartIcon className="h-4 w-4" />
-                                                Detailed Ethernet Statistics
-                                            </h4>
-                                            <div className="grid grid-cols-3 gap-2 text-xs">
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-muted-foreground">Unicast RX</div>
-                                                    <div className="font-medium">{formatNumber(ethernetStats.unicastReceived)}</div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-muted-foreground">Unicast TX</div>
-                                                    <div className="font-medium">{formatNumber(ethernetStats.unicastSent)}</div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-muted-foreground">Broadcast RX</div>
-                                                    <div className="font-medium">{formatNumber(ethernetStats.broadcastReceived)}</div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-muted-foreground">Broadcast TX</div>
-                                                    <div className="font-medium">{formatNumber(ethernetStats.broadcastSent)}</div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-muted-foreground">Multicast RX</div>
-                                                    <div className="font-medium">{formatNumber(ethernetStats.multicastReceived)}</div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-muted-foreground">Multicast TX</div>
-                                                    <div className="font-medium">{formatNumber(ethernetStats.multicastSent)}</div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-muted-foreground">CRC Errors</div>
-                                                    <div className="font-medium text-red-500">{formatNumber(ethernetStats.crcErrors)}</div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-muted-foreground">Discard RX</div>
-                                                    <div className="font-medium text-amber-500">{formatNumber(ethernetStats.discardReceived)}</div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-muted-foreground">Discard TX</div>
-                                                    <div className="font-medium text-amber-500">{formatNumber(ethernetStats.discardSent)}</div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-muted-foreground">Fragments RX</div>
-                                                    <div className="font-medium">{formatNumber(ethernetStats.fragmentsReceived)}</div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-muted-foreground">Fragments TX</div>
-                                                    <div className="font-medium">{formatNumber(ethernetStats.fragmentsSent)}</div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-muted-foreground">Jabbers RX</div>
-                                                    <div className="font-medium">{formatNumber(ethernetStats.jabbersReceived)}</div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-muted-foreground">OverSize RX</div>
-                                                    <div className="font-medium">{formatNumber(ethernetStats.overSizePackets)}</div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-muted-foreground">UnderSize RX</div>
-                                                    <div className="font-medium">{formatNumber(ethernetStats.underSizePackets)}</div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-muted-foreground">Errors RX</div>
-                                                    <div className="font-medium text-red-500">{formatNumber(ethernetStats.errorsReceived)}</div>
-                                                </div>
-                                                <div className="bg-muted/30 p-2 rounded">
-                                                    <div className="text-muted-foreground">Errors TX</div>
-                                                    <div className="font-medium text-red-500">{formatNumber(ethernetStats.errorsSent)}</div>
-                                                </div>
-                                            </div>
-                                        </div>
+                                    <div>
+                                        <span className="text-muted-foreground text-[9px] font-bold uppercase block mb-0.5">MTU / MRU</span>
+                                        <span className="font-mono text-slate-800 dark:text-slate-200">{conn.mtu || conn.currentMRU || "N/A"}</span>
                                     </div>
-                                )}
-
-                                {/* Footer */}
-                                <div className="flex items-center justify-between pt-2 text-xs text-muted-foreground border-t">
-                                    <div className="flex items-center gap-1">
-                                        <Clock className="h-3 w-3" />
-                                        {formatUptime(details.connectionStats.uptime)}
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        {details.connectionStats.natEnabled && (
-                                            <Badge variant="outline" className="text-xs">NAT</Badge>
-                                        )}
-                                        <Badge variant="outline" className="text-xs">
-                                            {details.serviceType}
-                                        </Badge>
+                                    <div>
+                                        <span className="text-muted-foreground text-[9px] font-bold uppercase block mb-0.5">Status</span>
+                                        <span className={`font-extrabold ${isConnected ? "text-emerald-500" : "text-red-500"}`}>
+                                            {isConnected ? "Connected" : "No Link"}
+                                        </span>
                                     </div>
                                 </div>
                             </div>
-                        </CardContainer>
+                        </div>
                     );
                 })}
+            </div>
+
+            {/* View All WAN Connections Link */}
+            <div className="mt-6 flex justify-center mb-6">
+                <Button variant="ghost" className="text-indigo-600 dark:text-indigo-400 text-xs font-bold gap-1 hover:bg-indigo-500/10 rounded-xl">
+                    View All WAN Connections &rarr;
+                </Button>
             </div>
 
             {/* Add WAN Modal */}

@@ -577,6 +577,26 @@ export const ServicesAPI = {
         );
     },
 
+    async createRadiusTableRow(table: string, data: Record<string, any>) {
+        return apiRequest<{ success: boolean; data: any }>(`/services/radius/tables/${encodeURIComponent(table)}`, {
+            method: 'POST',
+            body: JSON.stringify(data)
+        });
+    },
+
+    async updateRadiusTableRow(table: string, id: string | number, data: Record<string, any>) {
+        return apiRequest<{ success: boolean; data: any }>(`/services/radius/tables/${encodeURIComponent(table)}/${encodeURIComponent(String(id))}`, {
+            method: 'PUT',
+            body: JSON.stringify(data)
+        });
+    },
+
+    async deleteRadiusTableRow(table: string, id: string | number) {
+        return apiRequest<{ success: boolean; data: any }>(`/services/radius/tables/${encodeURIComponent(table)}/${encodeURIComponent(String(id))}`, {
+            method: 'DELETE'
+        });
+    },
+
     async sendRadiusCoA(username: string, payload: any) {
         return apiRequest<{ success: boolean; data: any }>(
             `/services/radius/users/${username}/coa`,

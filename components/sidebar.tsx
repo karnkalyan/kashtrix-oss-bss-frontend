@@ -20,66 +20,77 @@ const menuItems = [
     title: "Dashboard",
     icon: LayoutDashboard,
     href: "/",
+    category: "Dashboard",
     roles: ["Administrator", "Global Manager", "Branch Admin", "Staff", "Manager", "Customer", "Technical", "Field Support"]
   },
   {
-    title: "Users",
+    title: "Access Control",
     icon: Users,
     href: "/users",
+    category: "Administration",
     roles: ["Administrator", "Global Manager"]
   },
   {
     title: "Customers",
     icon: Users,
     href: "/customers/list",
+    category: "Administration",
     roles: ["Administrator", "Global Manager", "Branch Admin", "Staff", "Technical", "Field Support"]
   },
   {
     title: "Branches",
     icon: Building2,
     href: "/branch",
+    category: "Administration",
     roles: ["Administrator", "Global Manager"]
   },
   {
     title: "Billing",
     icon: CreditCard,
     href: "/billing",
+    category: "Finance",
     roles: ["Administrator", "Global Manager", "Branch Admin", "Staff", "Customer"]
   },
   {
-    title: "SMS Campaign",
+    title: "SMS Campaigns",
     icon: MessageSquare,
     href: "/sms-campaign",
+    category: "Sales & Marketing",
     roles: ["Administrator", "Global Manager", "Branch Admin"]
   },
   {
     title: "Reports",
     icon: BarChart3,
     href: "/reports",
+    category: "System",
     roles: ["Administrator", "Global Manager", "Branch Admin"]
   },
   {
-    title: "Support",
+    title: "Support Tickets",
     icon: HelpCircle,
     href: "/support",
+    category: "Support",
     roles: ["Administrator", "Global Manager", "Branch Admin", "Staff", "Manager", "Customer", "Technical", "Field Support"]
   },
   {
-    title: "NAS Management",
+    title: "NAS",
     icon: Server,
     href: "/nas",
+    category: "Network Infrastructure",
     roles: ["Administrator", "Global Manager", "Branch Admin", "Technical"]
   },
   {
-    title: "Master Settings",
+    title: "System Settings",
     icon: ShieldCheck,
     href: "/master-settings",
+    category: "System",
     roles: ["Administrator"]
   },
   {
-    title: "Settings",
+    title: "My Settings",
     icon: Settings,
     href: "/settings",
+    category: "System",
     roles: ["Administrator", "Global Manager", "Branch Admin", "Customer"]
   },
 ]
@@ -93,6 +104,8 @@ export function Sidebar() {
     return item.roles.includes(user.role.name)
   })
 
+  const categoryOrder = ["Dashboard", "Administration", "Sales & Marketing", "Network Infrastructure", "Finance", "Support", "System"]
+
   return (
     <SidebarComponent variant="floating" collapsible="icon">
       <SidebarHeader>
@@ -100,9 +113,17 @@ export function Sidebar() {
           <BrandLogo variant="wide" priority className="h-7 max-w-[180px]" />
         </div>
       </SidebarHeader>
-      <SidebarContent>
-        <SidebarMenu>
-          {filteredItems.map((item) => {
+      <SidebarContent className="px-2">
+        {categoryOrder.map((category) => {
+          const categoryItems = filteredItems.filter((item) => item.category === category)
+          if (!categoryItems.length) return null
+          return (
+            <div key={category} className="border-b border-border/60 py-3 last:border-b-0">
+              <div className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground group-data-[collapsible=icon]:hidden">
+                {category}
+              </div>
+              <SidebarMenu>
+          {categoryItems.map((item) => {
             const isActive = pathname === item.href
 
             return (
@@ -118,7 +139,10 @@ export function Sidebar() {
               </SidebarMenuItem>
             )
           })}
-        </SidebarMenu>
+              </SidebarMenu>
+            </div>
+          )
+        })}
       </SidebarContent>
       <SidebarFooter>
         <div className="p-4 text-xs text-muted-foreground">

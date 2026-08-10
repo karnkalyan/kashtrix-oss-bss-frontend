@@ -8,6 +8,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "react-hot-toast";
 import { FloatingAiChat } from "@/components/layout/floating-ai-chat";
+import { FieldStaffLocationTracker } from "@/components/field-staff/location-tracker";
 
 const pathPermissionMap: Record<string, string | string[]> = {
   "/admin/users": "users_read",
@@ -186,6 +187,7 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
       data-theme={mounted ? (isDarkMode ? "dark" : "light") : undefined}
       suppressHydrationWarning
     >
+      <FieldStaffLocationTracker />
       {!useMobilePortalChrome && <Sidebar open={sidebarOpen} setOpen={setSidebarOpen} />}
       <div className="flex flex-1 flex-col overflow-hidden">
         {!useMobilePortalChrome && <Navbar onMenuClick={() => setSidebarOpen((o) => !o)} />}

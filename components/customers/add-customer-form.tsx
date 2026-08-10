@@ -814,6 +814,25 @@ interface UploadedDocument {
   previewUrl?: string
 }
 
+const NETTV_NEPAL_FALLBACK: Country = {
+  id: 156,
+  name: "Nepal",
+  country_code: "np",
+  calling_code: "977",
+  provinces: [{ id: 3891, country_id: 156, name: "Province No. 3" }],
+}
+
+function unwrapNettvList(value: any, depth = 0): any[] {
+  if (Array.isArray(value)) return value
+  if (!value || typeof value !== "object" || depth > 4) return []
+  for (const candidate of [value?.data, value?.items, value?.results, value?.stbs, value?.orders, value?.countries]) {
+    if (Array.isArray(candidate)) return candidate
+    const nested = unwrapNettvList(candidate, depth + 1)
+    if (nested.length) return nested
+  }
+  return []
+}
+
 export function NetTVDialog({
   open,
   onOpenChange,
@@ -833,8 +852,8 @@ export function NetTVDialog({
   defaultLat = "",
   defaultLng = "",
 }: NetTVDialogProps) {
-  const [countries, setCountries] = useState<Country[]>([])
-  const [provinces, setProvinces] = useState<Province[]>([])
+  const [countries, setCountries] = useState<Country[]>([NETTV_NEPAL_FALLBACK])
+  const [provinces, setProvinces] = useState<Province[]>(NETTV_NEPAL_FALLBACK.provinces)
   const [loadingCountries, setLoadingCountries] = useState(false)
 
   const [username, setUsername] = useState(buildNettvCredential(defaultUsername || defaultEmail))
@@ -846,8 +865,8 @@ export function NetTVDialog({
   const [address, setAddress] = useState(defaultAddress)
   const [city, setCity] = useState(defaultCity)
   const [district, setDistrict] = useState(defaultDistrict)
-  const [selectedCountryId, setSelectedCountryId] = useState<number | null>(null)
-  const [selectedProvinceId, setSelectedProvinceId] = useState<number | null>(null)
+  const [selectedCountryId, setSelectedCountryId] = useState<number | null>(156)
+  const [selectedProvinceId, setSelectedProvinceId] = useState<number | null>(3891)
   const [phone_no, setPhoneNo] = useState(defaultPhone)
   const [mobile_no, setMobileNo] = useState(defaultMobile)
   const [website, setWebsite] = useState("")
@@ -950,13 +969,14 @@ export function NetTVDialog({
         try {
           const response = await apiRequest("/services/nettv/countries")
           if (response.success && response.data) {
-            const normalizedCountries = response.data.map((country: Country) => ({ ...country, id: Number(country.id), provinces: (country.provinces || []).map((province: Province) => ({ ...province, id: Number(province.id), country_id: Number(province.country_id) })) }))
-            setCountries(normalizedCountries)
+            const countryRows = unwrapNettvList(response.data)
+            const normalizedCountries = countryRows.map((country: Country) => ({ ...country, id: Number(country.id), provinces: (country.provinces || []).map((province: Province) => ({ ...province, id: Number(province.id), country_id: Number(province.country_id) })) }))
+            setCountries(normalizedCountries.length ? normalizedCountries : [NETTV_NEPAL_FALLBACK])
             
             // Set default country to Nepal (id 156 or name Nepal)
             const nepal = normalizedCountries.find((c: Country) => c.name.toLowerCase() === "nepal" || c.id === 156)
             if (nepal) {
-              setSelectedCountryId(nepal.id)
+              setSelectedCountryId(156)
               const requestedProvince = nepal.provinces?.find((province: Province) => province.id === 3891)
               if (!defaultProvince && requestedProvince) setSelectedProvinceId(requestedProvince.id)
             }
@@ -969,7 +989,7 @@ export function NetTVDialog({
                 return cleanName === cleanDefault || cleanName.includes(cleanDefault) || cleanDefault.includes(cleanName);
               })
             }
-            resolvedProvince ||= nepal?.provinces?.find((province: Province) => province.id === 3891) || nepal?.provinces?.[0]
+            resolvedProvince ||= nepal?.provinces?.find((province: Province) => Number(province.id) === 3891) || nepal?.provinces?.[0]
             if (resolvedProvince) {
               setSelectedProvinceId(resolvedProvince.id)
               setSelectedCountryId(resolvedProvince.country_id)
@@ -1123,13 +1143,12 @@ export function NetTVDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
         <DialogHeader>
-          <DialogTitle>{nettvSubscriberRegistered ? "NETTV Device & Subscription Provisioning" : "Configure NETTV Service"}</DialogTitle>
+          <DialogTitle>Configure NETTV Service</DialogTitle>
           <DialogDescription>
-            {nettvSubscriberRegistered ? `Subscriber ${buildNettvCredential(username)} is registered. Link the customer's STB and assign a subscription package.` : "Enter the NETTV subscriber details. Fields marked * are required."}
+            Enter the NETTV subscriber details. Nepal and Province No. 3 are selected automatically. Fields marked * are required.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-4">
-          {!nettvSubscriberRegistered && <>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="nettvUsername">Username *</Label>
@@ -1288,43 +1307,9 @@ export function NetTVDialog({
               placeholder="https://example.com"
             />
           </div>
-          </>}
-
-          {nettvSubscriberRegistered && <div className="space-y-4 rounded-lg border p-4">
-            <div>
-              <Label className="text-base font-semibold">Set-Top Box (STB) & Service Provisioning</Label>
-              <p className="text-xs text-muted-foreground">Optionally link an available STB and assign its package during subscriber provisioning.</p>
-              {nettvResellerBalance !== null && <p className="mt-1 text-sm font-medium text-emerald-600">Reseller wallet: Rs. {nettvResellerBalance.toFixed(2)}</p>}
-            </div>
-            <div className="space-y-2">
-              <Label>Select Linked STB</Label>
-              <select value={selectedStb} onChange={event => setSelectedStb(event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm">
-                <option value="">No STB</option>
-                {nettvStbs.map((stb: any) => {
-                  const serial = String(stb.serial || stb.mac || stb.serial_number || "")
-                  return <option key={serial} value={serial}>{serial} · {stb.model?.name || stb.model_name || stb.vendor?.name || "Default"}</option>
-                })}
-              </select>
-            </div>
-            {selectedStb && <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label>Assign Subscription Package</Label>
-                <select value={selectedPackageSaleId} onChange={event => setSelectedPackageSaleId(event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm">
-                  <option value="">Select package configuration</option>
-                  {nettvPackageConfigs.map((pkg: any, index: number) => {
-                    const id = String(pkg.package_sale_id || pkg.sale_id || pkg.id || "")
-                    const label = pkg.display_name || pkg.name || pkg.package_name || pkg.title || `Package #${id}`
-                    const price = pkg.price_with_vat ?? pkg.package_price ?? pkg.price
-                    return <option key={`${id}-${index}`} value={id}>{label}{price !== undefined ? ` · Rs. ${price}` : ""}{pkg.package_type ? ` · ${String(pkg.package_type).replace(/_/g, " ")}` : ""}</option>
-                  })}
-                </select>
-              </div>
-              <div className="space-y-2"><Label>Quantity</Label><Input type="number" min={1} value={packageQty} onChange={event => setPackageQty(Math.max(1, Number(event.target.value) || 1))} /></div>
-            </div>}
-          </div>}
 
           {/* Document Upload Section */}
-          {!nettvSubscriberRegistered && <div className="space-y-3 rounded-lg border p-4">
+          <div className="space-y-3 rounded-lg border p-4">
             <div className="flex items-center justify-between">
               <div>
                 <Label className="text-base font-semibold">Documents</Label>
@@ -1378,15 +1363,61 @@ export function NetTVDialog({
                 No documents uploaded. Click "Add Document" to upload an image.
               </div>
             )}
-          </div>}
+          </div>
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button type="button" onClick={handleConfirm}>{nettvSubscriberRegistered ? "Assign STB & Package" : "Create Subscriber"}</Button>
+          <Button type="button" onClick={handleConfirm}>Confirm Subscriber</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   )
+}
+
+interface NetTVDeviceOrderDialogProps { open: boolean; onOpenChange: (open: boolean) => void; username: string; customerId?: number; onComplete?: (details: any) => void | Promise<void> }
+
+export function NetTVDeviceOrderDialog({ open, onOpenChange, username, customerId, onComplete }: NetTVDeviceOrderDialogProps) {
+  const [loading, setLoading] = useState(false), [saving, setSaving] = useState(false)
+  const [subscriberDetails, setSubscriberDetails] = useState<any>(null), [stbs, setStbs] = useState<any[]>([]), [orders, setOrders] = useState<any[]>([])
+  const [selectedSerial, setSelectedSerial] = useState(""), [packageConfigs, setPackageConfigs] = useState<any[]>([]), [selectedPackageSaleId, setSelectedPackageSaleId] = useState("")
+  const [quantity, setQuantity] = useState(1), normalizedUsername = buildNettvCredential(username)
+
+  const loadDetails = useCallback(async () => {
+    if (!open || !normalizedUsername) return
+    setLoading(true)
+    try {
+      const [subscriberResponse, stbsResponse, ordersResponse] = await Promise.all([
+        ServicesAPI.getNetTVSubscriber(normalizedUsername), ServicesAPI.getNetTVSTBs(1, 250), ServicesAPI.getNetTVOrders(1, 100, normalizedUsername).catch(() => ({ data: [] } as any)),
+      ])
+      const overview = subscriberResponse?.data || {}, linkedStbs = unwrapNettvList(overview?.stbs || overview?.subscriber?.user_stbs), availableStbs = unwrapNettvList(stbsResponse?.data)
+      const uniqueStbs = [...linkedStbs, ...availableStbs].filter((stb, index, list) => { const serial = String(stb?.stb?.serial || stb?.serial || stb?.mac || stb?.serial_number || ""); return serial && list.findIndex(item => String(item?.stb?.serial || item?.serial || item?.mac || item?.serial_number || "") === serial) === index })
+      setSubscriberDetails(overview); setStbs(uniqueStbs); setOrders(unwrapNettvList(ordersResponse?.data))
+      const linkedSerial = String(linkedStbs[0]?.stb?.serial || linkedStbs[0]?.serial || ""); setSelectedSerial(current => current || linkedSerial)
+    } catch (error: any) { toast.error(error.message || "Failed to load NetTV device and order details") } finally { setLoading(false) }
+  }, [open, normalizedUsername])
+  useEffect(() => { loadDetails() }, [loadDetails])
+  useEffect(() => {
+    if (!selectedSerial) return setPackageConfigs([])
+    ServicesAPI.getNetTVPackageConfigs(selectedSerial).then(response => { const groups = unwrapNettvList(response?.data); setPackageConfigs(groups.flatMap((group: any) => { const sales = unwrapNettvList(group?.package_for_sale || group?.package_config); return sales.length ? sales.map((sale: any) => ({ ...sale, package_name: group.name, package_type: group.type })) : [group] })) }).catch(() => setPackageConfigs([]))
+  }, [selectedSerial])
+  const linkedSerials = new Set(unwrapNettvList(subscriberDetails?.stbs || subscriberDetails?.subscriber?.user_stbs).map((item: any) => String(item?.stb?.serial || item?.serial || "")))
+  const selectedStb = stbs.find(stb => String(stb?.stb?.serial || stb?.serial || stb?.mac || stb?.serial_number || "") === selectedSerial)
+  const assignDeviceAndPackage = async () => {
+    if (!selectedSerial) return toast.error("Select a NetTV STB")
+    setSaving(true)
+    try {
+      if (!linkedSerials.has(selectedSerial)) await ServicesAPI.addNetTVSubscriberSTB(normalizedUsername, { username: normalizedUsername, serial: selectedSerial, status: "1" })
+      if (selectedPackageSaleId) await ServicesAPI.subscribeNetTVPackages(selectedSerial, { pos: "web", created_by: normalizedUsername, payment_gateway: "reseller_wallet", packages: [{ package_sale_id: Number(selectedPackageSaleId), qty: Math.max(1, quantity) }], send_mail: 0 })
+      if (customerId) await ServicesAPI.linkNetTVSubscriberCustomer(normalizedUsername, customerId).catch(() => null)
+      const refreshed = await ServicesAPI.getNetTVSubscriber(normalizedUsername); toast.success(selectedPackageSaleId ? "NetTV STB linked and package assigned" : "NetTV STB linked successfully"); await onComplete?.(refreshed?.data); onOpenChange(false)
+    } catch (error: any) { toast.error(error.message || "Failed to assign NetTV STB or package") } finally { setSaving(false) }
+  }
+  return <Dialog open={open} onOpenChange={value => !saving && onOpenChange(value)}><DialogContent className="w-[95vw] max-h-[90vh] overflow-y-auto sm:max-w-3xl"><DialogHeader><DialogTitle>NetTV Device & Order</DialogTitle><DialogDescription>Subscriber <span className="font-mono font-semibold">{normalizedUsername}</span> is confirmed. Select an STB and subscription package for this same customer.</DialogDescription></DialogHeader>
+    {loading ? <div className="flex justify-center py-12"><Loader2 className="h-7 w-7 animate-spin" /></div> : <div className="space-y-5 py-3"><div className="space-y-2"><Label>Select Device *</Label><select value={selectedSerial} onChange={event => setSelectedSerial(event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm"><option value="">Select STB</option>{stbs.map((item: any) => { const stb = item?.stb || item, serial = String(stb?.serial || stb?.mac || stb?.serial_number || ""); return <option key={serial} value={serial}>{serial} · {stb?.model?.name || stb?.model_name || stb?.vendor?.name || "Default"}{linkedSerials.has(serial) ? " · Linked" : ""}</option> })}</select></div>
+      {selectedStb && <div className="grid grid-cols-2 gap-3 rounded-lg border p-4 text-sm md:grid-cols-4"><div><span className="block text-xs text-muted-foreground">Serial / MAC</span><span className="font-mono">{selectedSerial}</span></div><div><span className="block text-xs text-muted-foreground">Status</span>{String((selectedStb?.stb || selectedStb)?.status || "active")}</div><div><span className="block text-xs text-muted-foreground">Vendor</span>{(selectedStb?.stb || selectedStb)?.vendor?.name || (selectedStb?.stb || selectedStb)?.vendor_name || "Default"}</div><div><span className="block text-xs text-muted-foreground">Model</span>{(selectedStb?.stb || selectedStb)?.model?.name || (selectedStb?.stb || selectedStb)?.model_name || "Default"}</div></div>}
+      <div className="grid gap-4 sm:grid-cols-[1fr_130px]"><div className="space-y-2"><Label>Assign Subscription Package</Label><select value={selectedPackageSaleId} onChange={event => setSelectedPackageSaleId(event.target.value)} disabled={!selectedSerial} className="h-10 w-full rounded-md border bg-background px-3 text-sm"><option value="">Select package configuration</option>{packageConfigs.map((pkg: any, index) => { const id = String(pkg.package_sale_id || pkg.sale_id || pkg.id || ""); return <option key={`${id}-${index}`} value={id}>{pkg.display_name || pkg.name || pkg.package_name || `Package #${id}`}{pkg.price !== undefined ? ` · Rs. ${pkg.price}` : ""}</option> })}</select></div><div className="space-y-2"><Label>Quantity</Label><Input type="number" min={1} value={quantity} onChange={event => setQuantity(Math.max(1, Number(event.target.value) || 1))} /></div></div>
+      <div className="rounded-lg border p-4"><h4 className="mb-2 font-semibold">Active Orders</h4>{orders.length ? <div className="space-y-2">{orders.map((order: any, index) => <div key={order.id || index} className="flex justify-between rounded bg-muted/40 p-2 text-sm"><span>{order.package_name || order.name || `Order #${order.id || index + 1}`}</span><span>{order.status || "Active"}</span></div>)}</div> : <p className="text-sm text-muted-foreground">No orders yet. Select a package to create the first order.</p>}</div></div>}
+    <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Close</Button><Button onClick={assignDeviceAndPackage} disabled={loading || saving || !selectedSerial}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Assign Selected Package</Button></DialogFooter></DialogContent></Dialog>
 }
 
 // ==================== Import ACS WAN Component ====================
@@ -1561,6 +1592,8 @@ export function AddCustomerForm() {
   const [selectedNasId, setSelectedNasId] = useState("")
   const [accountBillingDialogOpen, setAccountBillingDialogOpen] = useState(false)
   const [nettvDialogOpen, setNettvDialogOpen] = useState(false)
+  const [nettvDeviceOrderOpen, setNettvDeviceOrderOpen] = useState(false)
+  const [nettvProvisionUsername, setNettvProvisionUsername] = useState("")
   const [nettvData, setNettvData] = useState<any>(null)
 
   useEffect(() => {
@@ -2814,7 +2847,8 @@ export function AddCustomerForm() {
         const nettvResult = response.services?.find((service: any) => String(service.service || service.code || "").toUpperCase() === "NETTV")
         if (nettvResult?.success && selectedAddonServices.has("NETTV") && !nettvData?.provisioning?.stb?.serial) {
           toast.success("NETTV subscriber created. Select the customer's STB and package to finish provisioning.")
-          setNettvDialogOpen(true)
+          setNettvProvisionUsername(buildNettvCredential(nettvData?.username || createdCustomer.customerUniqueId))
+          setNettvDeviceOrderOpen(true)
         }
       } else {
         toast.error(response.message || "Provisioning failed")
@@ -3172,6 +3206,9 @@ export function AddCustomerForm() {
           defaultLat={coordinates.lat}
           defaultLng={coordinates.lon}
         />
+      )}
+      {showProvisionSection && createdCustomer && (
+        <NetTVDeviceOrderDialog open={nettvDeviceOrderOpen} onOpenChange={setNettvDeviceOrderOpen} username={nettvProvisionUsername} customerId={createdCustomer.id} />
       )}
 
       {/* Lead Search */}

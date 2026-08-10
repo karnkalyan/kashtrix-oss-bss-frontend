@@ -41,7 +41,7 @@ export function StatsCards() {
     {
       title: "Active Customers",
       value: (statsData?.activeCustomers || 0).toLocaleString(),
-      change: totalCustomers > 0 ? `${Math.round((activeCustomers / totalCustomers) * 100)}% of total base` : "Customer base online",
+      change: totalCustomers > 0 ? `${Math.round((activeCustomers / totalCustomers) * 100)}% of total base` : "No customer records",
       icon: Users,
       tone: "text-[#6fa8ff] bg-[rgba(111,168,255,.12)]",
       changeTone: "text-[var(--status-success)]",

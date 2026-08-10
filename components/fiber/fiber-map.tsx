@@ -1,93 +1,114 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import "leaflet/dist/leaflet.css"
 import { Marker, Polyline, Popup, TileLayer, useMap } from "react-leaflet"
 import { SafeMapContainer as MapContainer } from "@/components/maps/safe-map-container"
 import {
     Upload, Maximize2, Minimize2, Trash2, Search, Eye, EyeOff,
-    X, ChevronDown, Plus, Folder, FolderOpen, Map as MapIcon,
-    Target, Settings2, Box, Activity, MapPin, Share2, Layers,
-    Server, Cable, Wifi, Network, Landmark
+    X, Plus, Folder, FolderOpen, Layers,
+    Users, ChevronLeft, ChevronRight, Target, MapPin
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Switch } from "@/components/ui/switch"
 import { Input } from "@/components/ui/input"
 import { toast } from "react-hot-toast"
 import { cn } from "@/lib/utils"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { CardContainer } from "@/components/ui/card-container"
 import { apiRequest } from "@/lib/api"
 import { fetchFiberNetworkDataset } from "@/lib/fiber-network-data"
+import { useTheme } from "next-themes"
 
-// Fix for Leaflet default icons - moved inside client-side check
+/* ───────────────────────── LEAFLET ICON FIX ───────────────────────── */
 const fixLeafletIcons = () => {
-    if (typeof window === 'undefined') return
-    
-    const L = require('leaflet')
+    if (typeof window === "undefined") return
+    const L = require("leaflet")
     delete (L.Icon.Default.prototype as any)._getIconUrl
     L.Icon.Default.mergeOptions({
-        iconRetinaUrl: '/leaflet/images/marker-icon-2x.png',
-        iconUrl: '/leaflet/images/marker-icon.png',
-        shadowUrl: '/leaflet/images/marker-shadow.png',
+        iconRetinaUrl: "/leaflet/images/marker-icon-2x.png",
+        iconUrl: "/leaflet/images/marker-icon.png",
+        shadowUrl: "/leaflet/images/marker-shadow.png",
     })
 }
 
-// --- 1. ICON ENGINE ---
-const createIcon = (label: string, color: string) => {
-    if (typeof window === 'undefined') return null
-    
-    const L = require('leaflet')
-    const { renderToString } = require('react-dom/server')
-    
-    const html = renderToString(
-        <div className={cn(
-            "flex items-center justify-center font-bold text-white shadow-lg border-2 border-white rounded-full w-8 h-8 text-sm",
-            color === "green" ? "bg-emerald-500" : color === "purple" ? "bg-purple-500" : color === "orange" ? "bg-orange-500" : "bg-blue-500"
-        )}>
-            {label}
-        </div>
-    )
-    return L.divIcon({ html, className: "bg-transparent", iconSize: [32, 32], iconAnchor: [16, 16] })
+/* ──────────────────── SVG ICON ENGINE (theme-aware) ──────────────── */
+type NodeKind = "olt" | "mdb" | "fdb" | "ont" | "pole"
+
+const NODE_STYLES: Record<NodeKind, { bg: string; border: string; darkBg: string; darkBorder: string; size: number }> = {
+    olt:  { bg: "#4f46e5", border: "#3730a3", darkBg: "#6366f1", darkBorder: "#818cf8", size: 38 },
+    mdb:  { bg: "#7c3aed", border: "#5b21b6", darkBg: "#8b5cf6", darkBorder: "#a78bfa", size: 32 },
+    fdb:  { bg: "#8b5cf6", border: "#6d28d9", darkBg: "#a78bfa", darkBorder: "#c4b5fd", size: 28 },
+    ont:  { bg: "#6366f1", border: "#4338ca", darkBg: "#818cf8", darkBorder: "#a5b4fc", size: 10 },
+    pole: { bg: "#475569", border: "#334155", darkBg: "#64748b", darkBorder: "#475569", size: 20 },
 }
 
-// --- 2. UNIVERSAL PARSER (DXF, QGS, KMZ, KML) ---
+const createNodeIcon = (kind: NodeKind, label: string, isDark: boolean, highlighted = false) => {
+    if (typeof window === "undefined") return null
+    const L = require("leaflet")
+    const s = NODE_STYLES[kind]
+    const bg = isDark ? s.darkBg : s.bg
+    const border = isDark ? s.darkBorder : s.border
+    const size = highlighted ? s.size + 6 : s.size
+
+    if (kind === "ont") {
+        // Small filled circle for ONT/customer
+        const dotSize = highlighted ? 14 : 10
+        const html = `<div style="width:${dotSize}px;height:${dotSize}px;background:${bg};border:2px solid ${isDark ? 'rgba(255,255,255,0.3)' : 'white'};border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.25);${highlighted ? 'animation:pulse 1.5s ease-in-out infinite;box-shadow:0 0 0 4px rgba(236,72,153,0.3),0 1px 4px rgba(0,0,0,0.25);background:#ec4899;border-color:white;' : ''}"></div>`
+        return L.divIcon({ html, className: "", iconSize: [dotSize, dotSize], iconAnchor: [dotSize / 2, dotSize / 2] })
+    }
+
+    if (kind === "pole") {
+        // Round dark circle with a white 'P' inside for poles
+        const dotSize = highlighted ? 22 : 18
+        const highlightRing = highlighted ? `box-shadow:0 0 0 3px rgba(236,72,153,0.4);background:#ec4899;border-color:white;` : ""
+        const html = `<div style="width:${dotSize}px;height:${dotSize}px;display:flex;align-items:center;justify-content:center;background:${highlighted ? '#ec4899' : bg};border:1.5px solid ${highlighted ? 'white' : border};border-radius:50%;color:white;font-size:9px;font-weight:700;font-family:Inter,system-ui,sans-serif;box-shadow:0 1px 4px rgba(0,0,0,0.25);${highlightRing}">P</div>`
+        return L.divIcon({ html, className: "", iconSize: [dotSize, dotSize], iconAnchor: [dotSize / 2, dotSize / 2] })
+    }
+
+    // Square icon with rounded corners and label text for OLT/MDB/FDB
+    const radius = kind === "olt" ? 8 : 6
+    const fontSize = kind === "olt" ? 11 : kind === "mdb" ? 10 : 9
+    const highlightRing = highlighted ? `box-shadow:0 0 0 4px rgba(236,72,153,0.4),0 2px 8px rgba(0,0,0,0.3);background:#ec4899;border-color:white;animation:pulse 1.5s ease-in-out infinite;` : ""
+    const html = `<div style="width:${size}px;height:${size}px;display:flex;align-items:center;justify-content:center;background:${highlighted ? '#ec4899' : bg};border:2.5px solid ${highlighted ? 'white' : border};border-radius:${radius}px;color:white;font-size:${fontSize}px;font-weight:700;font-family:Inter,system-ui,sans-serif;letter-spacing:0.5px;box-shadow:0 2px 8px rgba(0,0,0,${isDark ? '0.5' : '0.2'});${highlightRing}">${label}</div>`
+    return L.divIcon({ html, className: "", iconSize: [size, size], iconAnchor: [size / 2, size / 2] })
+}
+
+/* ─────────────────────── FIBER LINE STYLES ─────────────────────── */
+const FIBER_STYLES = {
+    backbone:     { weight: 4.5, opacity: 0.9,  color: "#4f46e5", darkColor: "#818cf8", dash: "" },
+    distribution: { weight: 3,   opacity: 0.8,  color: "#7c3aed", darkColor: "#a78bfa", dash: "" },
+    drop:         { weight: 1.8, opacity: 0.55, color: "#a5b4fc", darkColor: "#6366f1", dash: "" },
+    highlighted:  { weight: 5,   opacity: 1,    color: "#ec4899", darkColor: "#f472b6", dash: "" },
+}
+
+/* ─────────────────────── FILE PARSER ─────────────────────── */
 const parseFile = async (file: File): Promise<any[]> => {
-    const ext = file.name.split('.').pop()?.toLowerCase()
+    const ext = file.name.split(".").pop()?.toLowerCase()
     let text = ""
-    if (ext === 'kmz') {
-        const JSZip = (await import('jszip')).default
+    if (ext === "kmz") {
+        const JSZip = (await import("jszip")).default
         const zip = new JSZip()
         const data = await zip.loadAsync(await file.arrayBuffer())
-        const kmlFile = Object.keys(data.files).find(f => f.endsWith('.kml'))
-        text = await data.file(kmlFile!)!.async('string')
+        const kmlFile = Object.keys(data.files).find(f => f.endsWith(".kml"))
+        text = await data.file(kmlFile!)!.async("string")
     } else text = await file.text()
 
     const features: any[] = []
     const xml = new DOMParser().parseFromString(text, "text/xml")
     const nodes = xml.querySelectorAll("Placemark, maplayer, Entity")
-
     nodes.forEach(node => {
         const name = node.querySelector("name, layername")?.textContent || "Node"
         const coordNodes = node.querySelectorAll("coordinates, point")
         if (coordNodes.length > 0) {
             const coordStr = coordNodes[0].textContent?.trim() || ""
-            if (coordStr.includes(',')) {
+            if (coordStr.includes(",")) {
                 const parts = coordStr.split(/\s+/)
                 if (parts.length === 1) {
-                    const [lngStr, latStr] = parts[0].split(',')
-                    const lng = parseFloat(lngStr)
-                    const lat = parseFloat(latStr)
-                    if (!isNaN(lat) && !isNaN(lng)) features.push({ type: 'Point', coords: [lat, lng], name })
+                    const [lngStr, latStr] = parts[0].split(",")
+                    const lng = parseFloat(lngStr), lat = parseFloat(latStr)
+                    if (!isNaN(lat) && !isNaN(lng)) features.push({ type: "Point", coords: [lat, lng], name })
                 } else {
-                    const path = parts.map(p => {
-                        const [lngStr, latStr] = p.split(',')
-                        const lng = parseFloat(lngStr)
-                        const lat = parseFloat(latStr)
-                        return [lat, lng]
-                    }).filter(p => !isNaN(p[0]))
-                    features.push({ type: 'Line', path, name })
+                    const path = parts.map(p => { const [lngStr, latStr] = p.split(","); return [parseFloat(latStr), parseFloat(lngStr)] }).filter(p => !isNaN(p[0]))
+                    features.push({ type: "Line", path, name })
                 }
             }
         }
@@ -95,681 +116,654 @@ const parseFile = async (file: File): Promise<any[]> => {
     return features
 }
 
-function MapController({ focusPosition }: { focusPosition: [number, number] | null }) {
+/* ─────────────────────── MAP CONTROLLER ─────────────────────── */
+function MapController({ focusPosition, zoom, invalidate }: { focusPosition: [number, number] | null; zoom: number; invalidate: number }) {
     const map = useMap()
+    useEffect(() => { const t = setTimeout(() => map.invalidateSize(), 150); return () => clearTimeout(t) }, [map, invalidate])
     useEffect(() => {
-        const timer = window.setTimeout(() => {
-            map.invalidateSize()
-            map.setView(focusPosition || [27.7172, 85.3240], 13)
-        }, 100)
-        return () => window.clearTimeout(timer)
-    }, [map, focusPosition])
+        const t = setTimeout(() => {
+            if (focusPosition) map.setView(focusPosition, zoom, { animate: true })
+            else map.setZoom(zoom, { animate: true })
+        }, 80)
+        return () => clearTimeout(t)
+    }, [map, focusPosition, zoom])
     return null
 }
 
-export default function UltimateGISMap() {
-    const [isFullScreen, setIsFullScreen] = useState(false)
-    const [showPanel, setShowPanel] = useState(true)
-    const [autoReplace, setAutoReplace] = useState(false)
-    const [search, setSearch] = useState("")
-    const [activeTab, setActiveTab] = useState("files")
-    const [isClient, setIsClient] = useState(false)
-    const [icons, setIcons] = useState<any>(null)
+/* ═══════════════════════ MAIN COMPONENT ═══════════════════════ */
+export default function FiberGISMap() {
+    const { resolvedTheme } = useTheme()
+    const isDark = resolvedTheme === "dark"
+    const containerRef = useRef<HTMLDivElement>(null)
 
-    // Core State
-    const [categories, setCategories] = useState([{ id: '1', name: 'ISP Infrastructure', isExpanded: true }])
+    // UI state
+    const [isFullScreen, setIsFullScreen] = useState(false)
+    const [panelTab, setPanelTab] = useState<"layers" | "files" | "subscribers">("layers")
+    const [panelOpen, setPanelOpen] = useState(true)
+    const [search, setSearch] = useState("")
+    const [isClient, setIsClient] = useState(false)
+
+    // Map data
+    const [topology, setTopology] = useState<any>(null)
     const [files, setFiles] = useState<any[]>([])
+    const [categories, setCategories] = useState<{ id: string; name: string; isExpanded: boolean }[]>([])
     const [focusPosition, setFocusPosition] = useState<[number, number] | null>([27.7172, 85.3240])
-    const [targetCat, setTargetCat] = useState<string | null>(null)
+    const [mapZoom, setMapZoom] = useState(13)
     const [selectedCat, setSelectedCat] = useState<string | null>(null)
+    const [targetCat, setTargetCat] = useState<string | null>(null)
     const [newFolderName, setNewFolderName] = useState("")
     const fileInputRef = useRef<HTMLInputElement>(null)
 
-    // Master Layer Visibility
-    const [layers, setLayers] = useState({
-        olt: true,
-        splitter: true,
-        ont: true,
-        pole: true,
-        fiber: true,
-        misc: true
-    })
+    // Layer visibility
+    const [layers, setLayers] = useState({ olt: true, mdb: true, fdb: true, ont: true, pole: true, backbone: true, distribution: true, drop: true, misc: true })
 
-    const loadMapData = async () => {
+    // Subscriber highlight
+    const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null)
+    const [subscriberSearch, setSubscriberSearch] = useState("")
+
+    /* ── fullscreen ── */
+    const toggleFullScreen = () => {
+        if (!containerRef.current) return
+        if (!document.fullscreenElement) containerRef.current.requestFullscreen().catch(() => setIsFullScreen(true))
+        else document.exitFullscreen().catch(() => setIsFullScreen(false))
+    }
+    useEffect(() => {
+        const handler = () => setIsFullScreen(document.fullscreenElement === containerRef.current)
+        document.addEventListener("fullscreenchange", handler)
+        return () => document.removeEventListener("fullscreenchange", handler)
+    }, [])
+    useEffect(() => {
+        if (!isFullScreen) return
+        const handler = (e: KeyboardEvent) => { if (e.key === "Escape") { document.fullscreenElement ? document.exitFullscreen().catch(() => setIsFullScreen(false)) : setIsFullScreen(false) } }
+        window.addEventListener("keydown", handler)
+        return () => window.removeEventListener("keydown", handler)
+    }, [isFullScreen])
+
+    /* ── load data ── */
+    const getFirstPos = (data: any[]): [number, number] | null => {
+        const p = data?.find(d => d.type === "Point" && d.coords) || data?.[0]
+        if (!p) return null
+        if (p.type === "Point" && p.coords) return [p.coords[0], p.coords[1]]
+        if (p.type === "Line" && p.path?.[0]) return [p.path[0][0], p.path[0][1]]
+        return null
+    }
+
+    const loadMapData = useCallback(async () => {
         try {
             const [folderResult, topologyResult] = await Promise.allSettled([
                 apiRequest<any[]>("/fiber-map/folders"),
                 fetchFiberNetworkDataset(),
             ])
             const data = folderResult.status === "fulfilled" ? folderResult.value || [] : []
-            const topology = topologyResult.status === "fulfilled" ? topologyResult.value : null
-            if (data || topology) {
-                const loadedCategories = [
-                    ...(topology ? [{ id: "live-network", name: "Live Fiber Network", isExpanded: true }] : []),
-                    ...data.map(f => ({ id: f.id.toString(), name: f.name, isExpanded: true })),
-                ]
-                setCategories(loadedCategories)
-                setSelectedCat(current => {
-                    if (current && loadedCategories.some(cat => cat.id === current)) return current
-                    return loadedCategories[0]?.id || null
-                })
-                const allFiles: any[] = []
-                if (topology) {
-                    allFiles.push({
-                        id: "live-fiber-topology",
-                        catId: "live-network",
-                        name: "OLT · Splitter · ONT topology",
-                        data: topology.mapFeatures,
-                        isVisible: true,
-                        readOnly: true,
-                    })
-                }
-                data.forEach(f => {
-                    if (f.files) {
-                        f.files.forEach((file: any) => {
-                            allFiles.push({
-                                id: file.id.toString(),
-                                catId: f.id.toString(),
-                                name: file.name,
-                                data: file.data || [],
-                                isVisible: true
-                            })
-                        })
-                    }
-                })
-                setFiles(allFiles)
-                const livePosition = getFirstPositionFromData(topology?.mapFeatures || [])
-                if (livePosition) setFocusPosition(livePosition)
-            }
-        } catch (e) {
-            console.error("Failed to load map data")
-        }
-    }
+            const topo = topologyResult.status === "fulfilled" ? topologyResult.value : null
+            if (topo) setTopology(topo)
+            const loadedCats = [
+                ...(topo ? [{ id: "live-network", name: "Live Network", isExpanded: true }] : []),
+                ...data.map((f: any) => ({ id: f.id.toString(), name: f.name, isExpanded: true })),
+            ]
+            setCategories(loadedCats)
+            setSelectedCat(cur => (cur && loadedCats.some(c => c.id === cur)) ? cur : loadedCats[0]?.id || null)
+            const allFiles: any[] = []
+            if (topo) allFiles.push({ id: "live-fiber-topology", catId: "live-network", name: "OLT · MDB · FDB · ONT", data: topo.mapFeatures, isVisible: true, readOnly: true })
+            data.forEach((f: any) => f.files?.forEach((file: any) => allFiles.push({ id: file.id.toString(), catId: f.id.toString(), name: file.name, data: file.data || [], isVisible: true })))
+            setFiles(allFiles)
+            const livePos = getFirstPos(topo?.mapFeatures || [])
+            if (livePos) setFocusPosition(livePos)
+        } catch { /* silently handle */ }
+    }, [])
 
-    const createFolder = async () => {
-        const name = newFolderName.trim()
-        if (!name) {
-            toast.error("Folder name is required")
-            return
-        }
-
-        try {
-            const res = await apiRequest<any>('/fiber-map/folders', {
-                method: 'POST',
-                body: JSON.stringify({ name })
-            })
-            const newCategory = { id: res.id.toString(), name: res.name || name, isExpanded: true }
-            setCategories(prev => [...prev, newCategory])
-            setSelectedCat(newCategory.id)
-            setNewFolderName("")
-            toast.success("Folder created")
-        } catch (err) {
-            toast.error("Failed to create folder")
-        }
-    }
-
-    // Defer Leaflet until after React's development remount cycle. Mounting the
-    // map during the first Strict Mode effect can reuse a DOM node that Leaflet
-    // still owns and results in "Map container is already initialized".
+    /* ── init ── */
     useEffect(() => {
         const frame = window.requestAnimationFrame(() => {
             fixLeafletIcons()
-            setIcons({
-                OLT: createIcon("OLT", "green"),
-                SPLITTER: createIcon("FAT", "purple"),
-                ONT: createIcon("ONT", "orange"),
-                POLE: createIcon("P", "blue")
-            })
             setIsClient(true)
             void loadMapData()
         })
-
         return () => window.cancelAnimationFrame(frame)
-    }, [])
+    }, [loadMapData])
 
-    // UTIL: find first geo position from parsed data
-    const getFirstPositionFromData = (data: any[]): [number, number] | null => {
-        if (!data || data.length === 0) return null
-        const p = data.find(d => d.type === 'Point' && d.coords) || data[0]
-        if (p.type === 'Point' && p.coords) return [p.coords[0], p.coords[1]]
-        if (p.type === 'Line' && p.path && p.path.length > 0) return [p.path[0][0], p.path[0][1]]
-        return null
+    /* ── highlight path ── */
+    const highlightedPathKeys = useMemo(() => {
+        if (!topology || !selectedCustomerId) return new Set<string>()
+        const keys = new Set<string>()
+        const customer = topology.customers.find((c: any) => c.customerUniqueId === selectedCustomerId)
+        if (!customer) return keys
+        keys.add(`ont-${selectedCustomerId}`)
+        keys.add(`drop-fiber-${selectedCustomerId}`)
+        const service = (customer.serviceDetails || []).find((d: any) => d.status === "active") || customer.serviceDetails?.[0]
+        let splitterId = Number(service?.splitterId || service?.splitter?.id || customer.splitterId) || null
+        let depth = 0
+        while (splitterId && depth < 10) {
+            depth++
+            const splitter = topology.splitters.find((s: any) => Number(s.id) === splitterId)
+            if (!splitter) break
+            keys.add(`splitter-${splitter.id}`)
+            keys.add(`fiber-splitter-${splitter.id}`)
+            if (splitter.masterSplitterId) {
+                const master = topology.splitters.find((m: any) => String(splitter.masterSplitterId) === String(m.splitterId || m.id))
+                splitterId = master ? Number(master.id) : null
+            } else {
+                const oltId = splitter.oltId || splitter.olt?.id
+                if (oltId) keys.add(`olt-${oltId}`)
+                break
+            }
+        }
+        const directOlt = service?.oltId || service?.olt?.id || customer.oltId
+        if (directOlt) keys.add(`olt-${directOlt}`)
+        return keys
+    }, [selectedCustomerId, topology])
+
+    /* ── file management ── */
+    const createFolder = async () => {
+        const name = newFolderName.trim()
+        if (!name) return toast.error("Folder name is required")
+        try {
+            const res = await apiRequest<any>("/fiber-map/folders", { method: "POST", body: JSON.stringify({ name }) })
+            const cat = { id: res.id.toString(), name: res.name || name, isExpanded: true }
+            setCategories(p => [...p, cat])
+            setSelectedCat(cat.id)
+            setNewFolderName("")
+            toast.success("Folder created")
+        } catch { toast.error("Failed to create folder") }
     }
 
     const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
-        if (!file || !targetCat) {
-            toast.error("No folder selected")
-            return
-        }
+        if (!file || !targetCat) return toast.error("No folder selected")
         try {
-            const data: any[] = await parseFile(file)
-            
-            // Upload to backend
+            const data = await parseFile(file)
             const formData = new FormData()
-            formData.append('mapFile', file)
-            formData.append('folderId', targetCat)
-            formData.append('name', file.name)
-            formData.append('parsedData', JSON.stringify(data))
-
-            const res = await apiRequest<any>('/fiber-map/files', {
-                method: 'POST',
-                body: formData
-            })
-
-            const newFile = {
-                id: res.id.toString(),
-                catId: targetCat,
-                name: file.name,
-                data,
-                isVisible: true
-            }
-
-            if (autoReplace) {
-                setFiles([newFile])
-                const pos = getFirstPositionFromData(data)
-                setFocusPosition(pos)
-            } else {
-                setFiles(prev => [...prev, newFile])
-                if (!focusPosition) {
-                    const pos = getFirstPositionFromData(data)
-                    if (pos) setFocusPosition(pos)
-                }
-            }
+            formData.append("mapFile", file)
+            formData.append("folderId", targetCat)
+            formData.append("name", file.name)
+            formData.append("parsedData", JSON.stringify(data))
+            const res = await apiRequest<any>("/fiber-map/files", { method: "POST", body: formData })
+            setFiles(p => [...p, { id: res.id.toString(), catId: targetCat, name: file.name, data, isVisible: true }])
             setTargetCat(null)
             if (fileInputRef.current) fileInputRef.current.value = ""
             toast.success(`Loaded ${file.name}`)
-        } catch (err) {
-            console.error(err)
-            toast.error("Failed to parse and upload file")
-        }
+        } catch { toast.error("Failed to upload") }
     }
 
-    const handleFileClick = (file: any) => {
-        if (autoReplace) {
-            setFiles(prev => prev.map(f => ({ ...f, isVisible: f.id === file.id })))
-            const pos = getFirstPositionFromData(file.data)
-            setFocusPosition(pos)
-        } else {
-            setFiles(prev => prev.map(f => f.id === file.id ? { ...f, isVisible: !f.isVisible } : f))
-        }
-    }
-
-    const handleToggleVisibility = (e: React.MouseEvent, fileId: string) => {
+    const removeFile = async (e: React.MouseEvent, id: string) => {
         e.stopPropagation()
-        setFiles(prev => prev.map(f => f.id === fileId ? { ...f, isVisible: !f.isVisible } : f))
+        try { await apiRequest(`/fiber-map/files/${id}`, { method: "DELETE" }); setFiles(p => p.filter(f => f.id !== id)); toast.success("Removed") } catch { toast.error("Failed") }
     }
 
-    const handleRemoveFile = async (e: React.MouseEvent, fileId: string) => {
-        e.stopPropagation()
-        try {
-            await apiRequest(`/fiber-map/files/${fileId}`, { method: 'DELETE' })
-            setFiles(prev => prev.filter(f => f.id !== fileId))
-            toast.success("File removed")
-        } catch {
-            toast.error("Failed to remove file")
-        }
-    }
+    const toggleLayer = (key: string) => setLayers(p => ({ ...p, [key]: !(p as any)[key] }))
 
-    // effect: if user toggles autoReplace ON, and multiple files exist, choose the last visible file as focus
-    useEffect(() => {
-        if (autoReplace) {
-            const visible = files.find(f => f.isVisible) || files[files.length - 1]
-            if (visible) {
-                setFiles(prev => prev.map(f => ({ ...f, isVisible: f.id === visible.id })))
-                const pos = getFirstPositionFromData(visible.data)
-                setFocusPosition(pos)
-            } else {
-                setFocusPosition(null)
-            }
+    /* ── icons (memoized per theme) ── */
+    const icons = useMemo(() => {
+        if (!isClient) return null
+        return {
+            OLT: createNodeIcon("olt", "OLT", isDark),
+            MDB: createNodeIcon("mdb", "MDB", isDark),
+            FDB: createNodeIcon("fdb", "FDB", isDark),
+            POLE: createNodeIcon("pole", "", isDark),
+            ONT: createNodeIcon("ont", "", isDark),
+            OLT_HL: createNodeIcon("olt", "OLT", isDark, true),
+            MDB_HL: createNodeIcon("mdb", "MDB", isDark, true),
+            FDB_HL: createNodeIcon("fdb", "FDB", isDark, true),
+            POLE_HL: createNodeIcon("pole", "", isDark, true),
+            ONT_HL: createNodeIcon("ont", "", isDark, true),
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [autoReplace])
+    }, [isClient, isDark])
 
-    // Layer data with icons and colors
-    const layerConfigs = [
-        {
-            id: 'olt',
-            label: 'OLT',
-            icon: <Server className="h-5 w-5" />,
-            color: 'bg-emerald-500',
-            description: 'Optical Line Terminal'
-        },
-        {
-            id: 'splitter',
-            label: 'FAT',
-            icon: <Settings2 className="h-5 w-5" />,
-            color: 'bg-purple-500',
-            description: 'Fiber Access Terminal'
-        },
-        {
-            id: 'ont',
-            label: 'ONT / ONU',
-            icon: <Wifi className="h-5 w-5" />,
-            color: 'bg-orange-500',
-            description: 'Connected customer terminals'
-        },
-        {
-            id: 'pole',
-            label: 'Pole',
-            icon: <Landmark className="h-5 w-5" />,
-            color: 'bg-blue-500',
-            description: 'Utility Poles'
-        },
-        {
-            id: 'fiber',
-            label: 'Fiber',
-            icon: <Cable className="h-5 w-5" />,
-            color: 'bg-indigo-500',
-            description: 'Fiber Routes'
-        },
-        {
-            id: 'misc',
-            label: 'Misc',
-            icon: <Network className="h-5 w-5" />,
-            color: 'bg-gray-500',
-            description: 'Other Equipment'
-        },
+    /* ── layer config for panel ── */
+    const layerConfig = [
+        { key: "backbone", label: "Backbone", desc: "OLT → MDB trunk fiber", type: "line" as const, color: isDark ? FIBER_STYLES.backbone.darkColor : FIBER_STYLES.backbone.color },
+        { key: "distribution", label: "Distribution", desc: "MDB → FDB branches", type: "line" as const, color: isDark ? FIBER_STYLES.distribution.darkColor : FIBER_STYLES.distribution.color },
+        { key: "drop", label: "Drop", desc: "Last-mile to customer", type: "line" as const, color: isDark ? FIBER_STYLES.drop.darkColor : FIBER_STYLES.drop.color },
+        { key: "olt", label: "OLT", desc: "Optical Line Terminal", type: "node" as const, color: isDark ? NODE_STYLES.olt.darkBg : NODE_STYLES.olt.bg },
+        { key: "mdb", label: "MDB", desc: "Main Distribution Box", type: "node" as const, color: isDark ? NODE_STYLES.mdb.darkBg : NODE_STYLES.mdb.bg },
+        { key: "fdb", label: "FDB", desc: "Fiber Distribution Box", type: "node" as const, color: isDark ? NODE_STYLES.fdb.darkBg : NODE_STYLES.fdb.bg },
+        { key: "pole", label: "Pole", desc: "Utility Pole marker", type: "node" as const, color: isDark ? NODE_STYLES.pole.darkBg : NODE_STYLES.pole.bg },
+        { key: "ont", label: "ONT", desc: "Customer terminal", type: "node" as const, color: isDark ? NODE_STYLES.ont.darkBg : NODE_STYLES.ont.bg },
     ]
 
+    /* ── stats ── */
+    const stats = useMemo(() => {
+        if (!topology) return null
+        return { olts: topology.olts?.length || 0, splitters: topology.splitters?.length || 0, customers: topology.customers?.length || 0 }
+    }, [topology])
+
+    /* ═══════════════════════ RENDER ═══════════════════════ */
     return (
-        <div className={cn(
-            "relative h-screen w-full",
-            "bg-background",
-            isFullScreen && "fixed inset-0 z-[9999]"
-        )}>
-            {/* Map Container - Only render on client */}
+        <div ref={containerRef} className={cn("relative w-full", isFullScreen ? "fixed inset-0 z-[9999]" : "h-[calc(100vh-3.5rem)]")}>
+            {/* ── Tile layer + markers ── */}
             {isClient && icons && (
                 <div className="absolute inset-0 z-0">
-                    <MapContainer
-                        center={focusPosition || [27.7172, 85.3240]}
-                        zoom={13}
-                        className="h-full w-full"
-                        zoomControl={false}
-                        style={{
-                            height: '100%',
-                            width: '100%',
-                        }}
-                    >
-                        {/* Light mode tiles */}
+                    <MapContainer center={focusPosition || [27.7172, 85.324]} zoom={mapZoom} className="h-full w-full" zoomControl={false} style={{ height: "100%", width: "100%" }}>
                         <TileLayer
-                            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                            className="leaflet-tile-dark"
+                            url={isDark
+                                ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                                : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"}
+                            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>'
                         />
-                        {/* Dark mode tiles */}
-                        <TileLayer
-                            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-                            className="hidden dark:block"
-                        />
+                        <MapController focusPosition={focusPosition} zoom={mapZoom} invalidate={isFullScreen ? 1 : 0} />
 
-                        <MapController focusPosition={focusPosition} />
+                        {/* Render features */}
+                        {files.filter(f => f.isVisible).map(f => f.data.map((feat: any, i: number) => {
+                            const tag = (feat.name || "").toLowerCase()
+                            const isOlt = feat.kind === "olt" || (!feat.kind && tag.includes("olt"))
+                            const isSplitter = feat.kind === "splitter" || (!feat.kind && (tag.includes("splitter") || tag.includes("mdb") || tag.includes("fdb") || tag.includes("fat") || tag.includes("master")))
+                            const isMdb = feat.subKind === "mdb" || (isSplitter && (tag.includes("mdb") || tag.includes("master")))
+                            const isFdb = feat.subKind === "fdb" || (isSplitter && !isMdb)
+                            const isOnt = feat.kind === "ont" || (!feat.kind && (tag.includes("ont") || tag.includes("onu") || tag.includes("customer") || tag.includes("sub")))
+                            const isPole = !isOlt && !isSplitter && !isOnt && (feat.kind === "pole" || (!feat.kind && (tag.includes("pole") || tag.startsWith("pl") || tag.includes(" pl") || tag.includes("-pl") || tag.includes("post"))))
 
-                        {/* Render markers and lines */}
-                        {files.filter(f => f.isVisible).map(f => (
-                            f.data.map((feat: any, i: number) => {
-                                const tag = (feat.name || "").toLowerCase()
-                                if (feat.type === 'Point') {
-                                    let icon = icons.POLE;
-                                    let show = layers.pole
-                                    if (feat.kind === 'olt' || tag.includes('olt')) {
-                                        icon = icons.OLT;
-                                        show = layers.olt
-                                    }
-                                    else if (feat.kind === 'splitter' || tag.includes('splitter') || tag.includes('fat')) {
-                                        icon = icons.SPLITTER;
-                                        show = layers.splitter
-                                    }
-                                    else if (feat.kind === 'ont' || tag.includes('ont') || tag.includes('onu')) {
-                                        icon = icons.ONT
-                                        show = layers.ont
-                                    }
-                                    else if (!tag.includes('pole')) {
-                                        show = layers.misc
-                                    }
+                            // Build feature key for highlighting
+                            let featKey = ""
+                            if (feat.type === "Point") {
+                                if (isOlt && feat.meta?.id) featKey = `olt-${feat.meta.id}`
+                                else if (isSplitter && feat.meta?.id) featKey = `splitter-${feat.meta.id}`
+                                else if (isOnt && feat.meta?.customerId) featKey = `ont-${feat.meta.customerId}`
+                            } else {
+                                if (feat.meta?.customerId) featKey = `drop-fiber-${feat.meta.customerId}`
+                                else if (feat.meta?.splitterId) featKey = `fiber-splitter-${feat.meta.splitterId}`
+                            }
+                            const isHL = !!(selectedCustomerId && featKey && highlightedPathKeys.has(featKey))
 
-                                    if (!show) return null
-                                    if (search && !tag.includes(search.toLowerCase())) return null
+                            /* ── POINT ── */
+                            if (feat.type === "Point" && feat.coords) {
+                                let icon = icons.ONT
+                                let show = layers.ont
+                                if (isOlt) { icon = isHL ? icons.OLT_HL : icons.OLT; show = layers.olt }
+                                else if (isMdb) { icon = isHL ? icons.MDB_HL : icons.MDB; show = layers.mdb }
+                                else if (isFdb) { icon = isHL ? icons.FDB_HL : icons.FDB; show = layers.fdb }
+                                else if (isPole) { icon = isHL ? icons.POLE_HL : icons.POLE; show = layers.pole }
+                                else if (isOnt) { icon = isHL ? icons.ONT_HL : icons.ONT; show = layers.ont }
+                                else { show = layers.misc }
+                                if (!show && !isHL) return null
+                                if (search && !isHL && !tag.includes(search.toLowerCase())) return null
 
-                                    return (
-                                        <Marker key={`${f.id}-pt-${i}`} position={feat.coords} icon={icon}>
-                                            <Popup className="dark:bg-gray-900 dark:text-gray-100">
-                                                <div className="p-3 font-sans min-w-[180px] dark:bg-gray-900">
-                                                    <p className="font-bold border-b mb-2 pb-2 text-primary dark:text-primary-foreground">
-                                                        {feat.name}
-                                                    </p>
-                                                    <div className="bg-muted dark:bg-gray-800 p-2 rounded-md text-sm">
-                                                        {feat.status && <p className="mb-2 text-xs font-medium uppercase">{feat.status}</p>}
-                                                        <p className="text-xs flex justify-between">
-                                                            <span className="text-muted-foreground">LAT:</span>
-                                                            <span className="font-mono">{feat.coords[0].toFixed(7)}</span>
-                                                        </p>
-                                                        <p className="text-xs flex justify-between mt-1">
-                                                            <span className="text-muted-foreground">LON:</span>
-                                                            <span className="font-mono">{feat.coords[1].toFixed(7)}</span>
-                                                        </p>
-                                                        {feat.meta && Object.entries(feat.meta).filter(([, value]) => value !== null && value !== undefined && value !== '').slice(0, 6).map(([key, value]) => (
-                                                            <p key={key} className="mt-1 flex justify-between gap-3 text-xs"><span className="text-muted-foreground">{key}</span><span className="max-w-[120px] truncate font-mono">{String(value)}</span></p>
-                                                        ))}
-                                                    </div>
+                                return (
+                                    <Marker key={`${f.id}-p-${i}`} position={feat.coords} icon={icon}>
+                                        <Popup>
+                                            <div className="p-3 min-w-[200px] font-sans">
+                                                <div className="flex items-center gap-2 mb-2 pb-2 border-b border-border">
+                                                    <div className="w-3 h-3 rounded-sm" style={{ background: isOlt ? NODE_STYLES.olt.bg : isMdb ? NODE_STYLES.mdb.bg : isFdb ? NODE_STYLES.fdb.bg : isPole ? NODE_STYLES.pole.bg : NODE_STYLES.ont.bg }} />
+                                                    <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                                        {isOlt ? "OLT" : isMdb ? "MDB" : isFdb ? "FDB" : isPole ? "Pole" : "ONT"}
+                                                    </span>
                                                 </div>
-                                            </Popup>
-                                        </Marker>
-                                    )
+                                                <p className="font-semibold text-sm mb-2">{feat.name}</p>
+                                                {feat.status && <p className="text-xs mb-1"><span className={cn("inline-block w-1.5 h-1.5 rounded-full mr-1.5", feat.status === "active" ? "bg-emerald-500" : "bg-red-400")} />{feat.status}</p>}
+                                                <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-2 text-xs">
+                                                    <span className="text-muted-foreground">Lat</span><span className="font-mono text-right">{feat.coords[0].toFixed(6)}</span>
+                                                    <span className="text-muted-foreground">Lng</span><span className="font-mono text-right">{feat.coords[1].toFixed(6)}</span>
+                                                    {feat.meta && Object.entries(feat.meta).filter(([, v]) => v != null && v !== "").slice(0, 5).map(([k, v]) => (
+                                                        <span key={k} className="contents"><span className="text-muted-foreground truncate">{k}</span><span className="font-mono text-right truncate">{String(v)}</span></span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </Popup>
+                                    </Marker>
+                                )
+                            }
+
+                            /* ── LINE ── */
+                            if (feat.type === "Line" && feat.path) {
+                                const isBackbone = tag.includes("backbone") || tag.includes("master") || tag.includes("olt") || tag.includes("trunk")
+                                const isDrop = tag.includes("drop") || tag.includes("ont") || tag.includes("onu") || tag.includes("customer")
+                                const tier = feat.subKind || (isBackbone ? "backbone" : isDrop ? "drop" : "distribution")
+
+                                if (!isHL) {
+                                    if (tier === "backbone" && !layers.backbone) return null
+                                    if (tier === "distribution" && !layers.distribution) return null
+                                    if (tier === "drop" && !layers.drop) return null
                                 }
-                                // Line
-                                if (!layers.fiber) return null
-                                if (search && !(feat.name || "").toLowerCase().includes(search.toLowerCase())) return null
+                                if (search && !isHL && !tag.includes(search.toLowerCase())) return null
+                                const style = isHL ? FIBER_STYLES.highlighted : (FIBER_STYLES as any)[tier] || FIBER_STYLES.drop
                                 return (
                                     <Polyline
-                                        key={`${f.id}-ln-${i}`}
+                                        key={`${f.id}-l-${i}`}
                                         positions={feat.path}
                                         pathOptions={{
-                                            color: feat.meta?.coreColor || '#6366f1',
-                                            weight: 4,
-                                            opacity: 0.8,
+                                            color: isDark ? style.darkColor : style.color,
+                                            weight: isHL ? style.weight : style.weight,
+                                            opacity: isHL ? 1 : style.opacity,
+                                            dashArray: style.dash || undefined,
                                         }}
                                     />
                                 )
-                            })
-                        ))}
+                            }
+                            return null
+                        }))}
                     </MapContainer>
                 </div>
             )}
 
-            {/* --- MAIN GIS PANEL --- */}
-            <div className={cn(
-                "absolute top-5 left-5 z-[1001] transition-all duration-300",
-                !showPanel && "-translate-x-[420px]"
-            )}>
-                <CardContainer
-                    title="Network GIS"
-                    description="Manage fiber network infrastructure"
-                    gradientColor="#6366f1"
-                    className="w-96 max-h-[90vh] overflow-hidden shadow-xl bg-background/95 backdrop-blur"
-                >
-                    <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                        <TabsList className="grid grid-cols-2 mb-4">
-                            <TabsTrigger value="files">
-                                <Folder className="h-4 w-4 mr-2" />
-                                Files
-                            </TabsTrigger>
-                            <TabsTrigger value="layers">
-                                <Layers className="h-4 w-4 mr-2" />
-                                Layers
-                            </TabsTrigger>
-                        </TabsList>
-
-                        <TabsContent value="files" className="space-y-4 mt-0">
-                            <div className="space-y-4">
-                                <div className="flex items-center justify-between p-2 bg-muted/50 rounded-lg">
-                                    <div className="flex items-center gap-2">
-                                        <Switch
-                                            checked={autoReplace}
-                                            onCheckedChange={setAutoReplace}
-                                            className="data-[state=checked]:bg-primary"
-                                        />
-                                        <div>
-                                            <p className="text-sm font-medium">Auto Replace</p>
-                                            <p className="text-xs text-muted-foreground">
-                                                {autoReplace ? "Showing one file at a time" : "Show all files"}
-                                            </p>
-                                        </div>
-                                    </div>
-                                    <Button
-                                        size="sm"
-                                        onClick={() => {
-                                            const catId = selectedCat || categories[0]?.id
-                                            if (catId) {
-                                                setTargetCat(catId)
-                                                fileInputRef.current?.click()
-                                            } else {
-                                                toast.error("Create or select a folder first")
-                                            }
-                                        }}
-                                    >
-                                        <Upload className="h-4 w-4 mr-2" />
-                                        Upload
-                                    </Button>
-                                </div>
-
-                                <div className="flex gap-2">
-                                    <Input
-                                        placeholder="Create new folder..."
-                                        className="flex-1"
-                                        value={newFolderName}
-                                        onChange={e => setNewFolderName(e.target.value)}
-                                        onKeyDown={async e => {
-                                            if (e.key === 'Enter') {
-                                                e.preventDefault()
-                                                await createFolder()
-                                            }
-                                        }}
-                                    />
-                                    <Button size="icon" onClick={createFolder}>
-                                        <Plus className="h-4 w-4" />
-                                    </Button>
-                                </div>
-
-                                <ScrollArea className="h-[400px] pr-4">
-                                    <div className="space-y-3">
-                                        {categories.map(cat => (
-                                            <div
-                                                key={cat.id}
-                                                className={cn(
-                                                    "border rounded-lg overflow-hidden bg-card",
-                                                    selectedCat === cat.id && "ring-2 ring-primary/50 border-primary/50"
-                                                )}
-                                            >
-                                                <div className="p-3 bg-muted/30 flex items-center justify-between">
-                                                    <button
-                                                        className="flex items-center gap-2 text-sm font-medium flex-1 hover:text-primary transition-colors"
-                                                        onClick={() => {
-                                                            setSelectedCat(cat.id)
-                                                            setCategories(p => p.map(c => c.id === cat.id ? { ...c, isExpanded: !c.isExpanded } : c))
-                                                        }}
-                                                    >
-                                                        {cat.isExpanded ?
-                                                            <FolderOpen className="h-4 w-4 text-primary" /> :
-                                                            <Folder className="h-4 w-4" />
-                                                        }
-                                                        <span>{cat.name}</span>
-                                                        <span className="text-xs text-muted-foreground ml-1">
-                                                            ({files.filter(f => f.catId === cat.id).length})
-                                                        </span>
-                                                    </button>
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="h-8 w-8 hover:bg-primary/10"
-                                                        onClick={() => {
-                                                            setTargetCat(cat.id);
-                                                            fileInputRef.current?.click();
-                                                        }}
-                                                    >
-                                                        <Plus className="h-4 w-4" />
-                                                    </Button>
-                                                </div>
-                                                {cat.isExpanded && (
-                                                    <div className="p-2 space-y-1 border-t">
-                                                        {files.filter(f => f.catId === cat.id).map(file => (
-                                                            <div
-                                                                key={file.id}
-                                                                className={cn(
-                                                                    "flex items-center justify-between p-2.5 rounded-lg group transition-all cursor-pointer hover:bg-accent",
-                                                                    !file.isVisible && "opacity-50 grayscale"
-                                                                )}
-                                                                onClick={() => handleFileClick(file)}
-                                                            >
-                                                                <div className="flex items-center gap-3 min-w-0">
-                                                                    <div className="relative">
-                                                                        <Button
-                                                                            variant="ghost"
-                                                                            size="icon"
-                                                                            className="h-7 w-7"
-                                                                            onClick={(e) => handleToggleVisibility(e, file.id)}
-                                                                        >
-                                                                            {file.isVisible ?
-                                                                                <Eye className="h-3.5 w-3.5" /> :
-                                                                                <EyeOff className="h-3.5 w-3.5" />
-                                                                            }
-                                                                        </Button>
-                                                                        {file.isVisible && (
-                                                                            <div className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-green-500 rounded-full"></div>
-                                                                        )}
-                                                                    </div>
-                                                                    <div className="min-w-0">
-                                                                        <p className="text-sm font-medium truncate">{file.name}</p>
-                                                                        <p className="text-xs text-muted-foreground">
-                                                                            {file.data.length} features
-                                                                        </p>
-                                                                    </div>
-                                                                </div>
-                                                                <div className="flex items-center gap-1">
-                                                                    {!file.readOnly && <Button
-                                                                        variant="ghost"
-                                                                        size="icon"
-                                                                        className="h-7 w-7 opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive"
-                                                                        onClick={(e) => handleRemoveFile(e, file.id)}
-                                                                    >
-                                                                        <Trash2 className="h-3.5 w-3.5" />
-                                                                    </Button>}
-                                                                </div>
-                                                            </div>
-                                                        ))}
-                                                        {files.filter(f => f.catId === cat.id).length === 0 && (
-                                                            <div className="p-4 text-center">
-                                                                <FolderOpen className="h-8 w-8 mx-auto text-muted-foreground/50 mb-2" />
-                                                                <p className="text-sm text-muted-foreground">
-                                                                    No files in this folder
-                                                                </p>
-                                                                <p className="text-xs text-muted-foreground mt-1">
-                                                                    Upload files or drag & drop
-                                                                </p>
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        ))}
-                                    </div>
-                                </ScrollArea>
+            {/* ── TOP BAR ── */}
+            <div className="absolute top-4 left-4 right-4 z-[1001] flex items-center justify-between pointer-events-none">
+                {/* Left: branding */}
+                <div className="flex items-center gap-3 pointer-events-auto">
+                    <div className={cn(
+                        "flex items-center gap-2.5 px-4 py-2 rounded-xl shadow-lg border backdrop-blur-xl",
+                        isDark ? "bg-gray-900/80 border-white/10" : "bg-white/90 border-gray-200/60"
+                    )}>
+                        <MapPin className="h-5 w-5 text-indigo-500" />
+                        <span className="text-sm font-bold tracking-tight">Fiber GIS</span>
+                        {stats && (
+                            <div className="flex items-center gap-2 ml-2 pl-2 border-l border-border">
+                                <span className="text-[10px] text-muted-foreground">{stats.olts} OLT</span>
+                                <span className="text-[10px] text-muted-foreground">·</span>
+                                <span className="text-[10px] text-muted-foreground">{stats.splitters} Splitters</span>
+                                <span className="text-[10px] text-muted-foreground">·</span>
+                                <span className="text-[10px] text-muted-foreground">{stats.customers} ONT</span>
                             </div>
-                        </TabsContent>
+                        )}
+                    </div>
+                </div>
 
-                        <TabsContent value="layers" className="space-y-4 mt-0">
-                            <div className="space-y-4">
-                                <div className="grid gap-3">
-                                    {layerConfigs.map(layer => (
-                                        <div
-                                            key={layer.id}
+                {/* Right: search + controls */}
+                <div className="flex items-center gap-2 pointer-events-auto">
+                    <div className={cn("relative", isDark ? "text-white" : "text-gray-900")}>
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <input
+                            className={cn(
+                                "w-56 h-9 pl-9 pr-3 rounded-xl text-xs border shadow-lg backdrop-blur-xl outline-none focus:ring-2 focus:ring-indigo-500/30",
+                                isDark ? "bg-gray-900/80 border-white/10 placeholder:text-gray-500" : "bg-white/90 border-gray-200/60 placeholder:text-gray-400"
+                            )}
+                            placeholder="Search nodes, fibers…"
+                            value={search}
+                            onChange={e => setSearch(e.target.value)}
+                        />
+                    </div>
+                    <button
+                        onClick={toggleFullScreen}
+                        className={cn(
+                            "h-9 w-9 flex items-center justify-center rounded-xl border shadow-lg backdrop-blur-xl transition-colors",
+                            isDark ? "bg-gray-900/80 border-white/10 hover:bg-gray-800/80" : "bg-white/90 border-gray-200/60 hover:bg-gray-100/90"
+                        )}
+                    >
+                        {isFullScreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                    </button>
+                </div>
+            </div>
+
+            {/* ── LEGEND (bottom-right) ── */}
+            <div className={cn(
+                "absolute bottom-6 right-4 z-[1001] rounded-xl border shadow-lg backdrop-blur-xl p-3",
+                isDark ? "bg-gray-900/80 border-white/10" : "bg-white/90 border-gray-200/60"
+            )}>
+                <div className="space-y-2">
+                    {/* Lines */}
+                    {[
+                        { label: "Backbone", color: isDark ? FIBER_STYLES.backbone.darkColor : FIBER_STYLES.backbone.color, w: "w-6 h-[3px]" },
+                        { label: "Distribution", color: isDark ? FIBER_STYLES.distribution.darkColor : FIBER_STYLES.distribution.color, w: "w-6 h-[2.5px]" },
+                        { label: "Drop", color: isDark ? FIBER_STYLES.drop.darkColor : FIBER_STYLES.drop.color, w: "w-6 h-[1.5px]" },
+                    ].map(item => (
+                        <div key={item.label} className="flex items-center gap-2.5">
+                            <div className={cn(item.w, "rounded-full flex-shrink-0")} style={{ background: item.color }} />
+                            <span className="text-[11px] text-muted-foreground">{item.label}</span>
+                        </div>
+                    ))}
+                    <div className="border-t border-border my-1.5" />
+                    {/* Nodes */}
+                    {[
+                        { label: "OLT", bg: isDark ? NODE_STYLES.olt.darkBg : NODE_STYLES.olt.bg, shape: "rounded-[3px] w-4 h-4" },
+                        { label: "MDB", bg: isDark ? NODE_STYLES.mdb.darkBg : NODE_STYLES.mdb.bg, shape: "rounded-[3px] w-3.5 h-3.5" },
+                        { label: "FDB", bg: isDark ? NODE_STYLES.fdb.darkBg : NODE_STYLES.fdb.bg, shape: "rounded-[2px] w-3 h-3" },
+                        { label: "Pole", bg: isDark ? NODE_STYLES.pole.darkBg : NODE_STYLES.pole.bg, shape: "rounded-full w-3 h-3" },
+                        { label: "ONT", bg: isDark ? NODE_STYLES.ont.darkBg : NODE_STYLES.ont.bg, shape: "rounded-full w-2.5 h-2.5" },
+                    ].map(item => (
+                        <div key={item.label} className="flex items-center gap-2.5">
+                            <div className={cn(item.shape, "flex-shrink-0 border border-white/30")} style={{ background: item.bg }} />
+                            <span className="text-[11px] text-muted-foreground">{item.label}</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            {/* ── SIDE PANEL ── */}
+            <div className={cn(
+                "absolute top-16 left-4 bottom-6 z-[1001] transition-all duration-300 flex",
+                !panelOpen && "-translate-x-[calc(100%+1rem)]"
+            )}>
+                <div className={cn(
+                    "w-80 rounded-xl border shadow-xl backdrop-blur-xl overflow-hidden flex flex-col",
+                    isDark ? "bg-gray-900/90 border-white/10" : "bg-white/95 border-gray-200/60"
+                )}>
+                    {/* Tab bar */}
+                    <div className={cn("flex border-b", isDark ? "border-white/10" : "border-gray-200/60")}>
+                        {[
+                            { key: "layers" as const, icon: <Layers className="h-3.5 w-3.5" />, label: "Layers" },
+                            { key: "files" as const, icon: <Folder className="h-3.5 w-3.5" />, label: "Files" },
+                            { key: "subscribers" as const, icon: <Users className="h-3.5 w-3.5" />, label: "Subscribers" },
+                        ].map(tab => (
+                            <button
+                                key={tab.key}
+                                onClick={() => setPanelTab(tab.key)}
+                                className={cn(
+                                    "flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[11px] font-medium transition-colors border-b-2",
+                                    panelTab === tab.key
+                                        ? "border-indigo-500 text-indigo-500"
+                                        : "border-transparent text-muted-foreground hover:text-foreground"
+                                )}
+                            >
+                                {tab.icon}{tab.label}
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* Content */}
+                    <ScrollArea className="flex-1">
+                        <div className="p-3">
+                            {/* ── LAYERS TAB ── */}
+                            {panelTab === "layers" && (
+                                <div className="space-y-1">
+                                    {layerConfig.map(layer => (
+                                        <button
+                                            key={layer.key}
+                                            onClick={() => toggleLayer(layer.key)}
                                             className={cn(
-                                                "flex items-center justify-between p-3 rounded-lg border transition-all cursor-pointer",
-                                                (layers as any)[layer.id]
-                                                    ? "bg-primary/5 border-primary/30"
-                                                    : "bg-muted/30 border-border"
+                                                "w-full flex items-center gap-3 p-2.5 rounded-lg text-left transition-colors",
+                                                (layers as any)[layer.key] ? (isDark ? "bg-white/5" : "bg-gray-50") : "opacity-40"
                                             )}
-                                            onClick={() => setLayers(p => ({ ...p, [layer.id]: !(p as any)[layer.id] }))}
                                         >
-                                            <div className="flex items-center gap-3">
-                                                <div className={cn(
-                                                    "p-2 rounded-lg",
-                                                    layer.color,
-                                                    (layers as any)[layer.id] ? '' : 'opacity-50'
-                                                )}>
-                                                    {layer.icon}
-                                                </div>
-                                                <div>
-                                                    <p className="font-medium">{layer.label}</p>
-                                                    <p className="text-xs text-muted-foreground">{layer.description}</p>
-                                                </div>
-                                            </div>
-                                            <div className="flex items-center gap-3">
-                                                <div className={cn(
-                                                    "w-10 h-6 rounded-full relative transition-colors",
-                                                    (layers as any)[layer.id] ? "bg-primary" : "bg-muted"
-                                                )}>
+                                            {layer.type === "line" ? (
+                                                <div className="w-6 flex items-center justify-center flex-shrink-0"><div className="w-5 h-[2.5px] rounded-full" style={{ background: layer.color }} /></div>
+                                            ) : (
+                                                <div className="w-6 flex items-center justify-center flex-shrink-0">
                                                     <div className={cn(
-                                                        "absolute top-1 w-4 h-4 rounded-full bg-white transition-transform",
-                                                        (layers as any)[layer.id] ? "left-5" : "left-1"
-                                                    )} />
+                                                        "border border-white/30",
+                                                        ["ont", "pole"].includes(layer.key) ? "w-2.5 h-2.5 rounded-full" : "w-3.5 h-3.5 rounded-[3px]"
+                                                    )} style={{ background: layer.color }} />
                                                 </div>
+                                            )}
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-xs font-medium">{layer.label}</p>
+                                                <p className="text-[10px] text-muted-foreground">{layer.desc}</p>
                                             </div>
+                                            <div className={cn(
+                                                "w-8 h-[18px] rounded-full relative transition-colors flex-shrink-0",
+                                                (layers as any)[layer.key] ? "bg-indigo-500" : (isDark ? "bg-white/10" : "bg-gray-200")
+                                            )}>
+                                                <div className={cn(
+                                                    "absolute top-[2px] w-[14px] h-[14px] rounded-full bg-white shadow-sm transition-transform",
+                                                    (layers as any)[layer.key] ? "translate-x-[16px]" : "translate-x-[2px]"
+                                                )} />
+                                            </div>
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* ── FILES TAB ── */}
+                            {panelTab === "files" && (
+                                <div className="space-y-3">
+                                    <div className="flex gap-2">
+                                        <Input
+                                            placeholder="New folder…"
+                                            className="flex-1 h-8 text-xs"
+                                            value={newFolderName}
+                                            onChange={e => setNewFolderName(e.target.value)}
+                                            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); createFolder() } }}
+                                        />
+                                        <Button size="icon" className="h-8 w-8" onClick={createFolder}><Plus className="h-3.5 w-3.5" /></Button>
+                                    </div>
+                                    {categories.map(cat => (
+                                        <div key={cat.id} className={cn("border rounded-lg overflow-hidden", isDark ? "border-white/10" : "border-gray-200/60", selectedCat === cat.id && "ring-1 ring-indigo-500/50")}>
+                                            <div className={cn("flex items-center justify-between p-2.5", isDark ? "bg-white/5" : "bg-gray-50")}>
+                                                <button
+                                                    className="flex items-center gap-2 text-xs font-medium flex-1 text-left"
+                                                    onClick={() => { setSelectedCat(cat.id); setCategories(p => p.map(c => c.id === cat.id ? { ...c, isExpanded: !c.isExpanded } : c)) }}
+                                                >
+                                                    {cat.isExpanded ? <FolderOpen className="h-3.5 w-3.5 text-indigo-500" /> : <Folder className="h-3.5 w-3.5" />}
+                                                    {cat.name}
+                                                    <span className="text-[10px] text-muted-foreground">({files.filter(f => f.catId === cat.id).length})</span>
+                                                </button>
+                                                {!cat.id.startsWith("live") && (
+                                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setTargetCat(cat.id); fileInputRef.current?.click() }}>
+                                                        <Upload className="h-3 w-3" />
+                                                    </Button>
+                                                )}
+                                            </div>
+                                            {cat.isExpanded && (
+                                                <div className="p-1.5 space-y-0.5">
+                                                    {files.filter(f => f.catId === cat.id).map(file => (
+                                                        <div
+                                                            key={file.id}
+                                                            className={cn("flex items-center justify-between px-2.5 py-2 rounded-md text-xs cursor-pointer group transition-colors", isDark ? "hover:bg-white/5" : "hover:bg-gray-50", !file.isVisible && "opacity-40")}
+                                                            onClick={() => setFiles(p => p.map(f => f.id === file.id ? { ...f, isVisible: !f.isVisible } : f))}
+                                                        >
+                                                            <div className="flex items-center gap-2 min-w-0">
+                                                                {file.isVisible ? <Eye className="h-3 w-3 text-indigo-500 flex-shrink-0" /> : <EyeOff className="h-3 w-3 flex-shrink-0" />}
+                                                                <span className="truncate">{file.name}</span>
+                                                                <span className="text-[10px] text-muted-foreground flex-shrink-0">{file.data.length}</span>
+                                                            </div>
+                                                            {!file.readOnly && (
+                                                                <button onClick={e => removeFile(e, file.id)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-500">
+                                                                    <Trash2 className="h-3 w-3" />
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                    {files.filter(f => f.catId === cat.id).length === 0 && (
+                                                        <p className="text-[10px] text-muted-foreground text-center py-4">Empty folder</p>
+                                                    )}
+                                                </div>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
+                            )}
 
-                                <div className="pt-4 border-t">
-                                    <div className="flex items-center justify-between">
-                                        <div>
-                                            <p className="font-medium">Map Theme</p>
-                                            <p className="text-xs text-muted-foreground">Toggle between light/dark</p>
+                            {/* ── SUBSCRIBERS TAB ── */}
+                            {panelTab === "subscribers" && (
+                                <div className="space-y-3">
+                                    <div className="relative">
+                                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                                        <Input className="pl-8 h-8 text-xs" placeholder="Search subscriber…" value={subscriberSearch} onChange={e => setSubscriberSearch(e.target.value)} />
+                                    </div>
+
+                                    {selectedCustomerId && (
+                                        <div className={cn("flex items-center justify-between p-2.5 rounded-lg border", isDark ? "bg-pink-500/10 border-pink-500/20" : "bg-pink-50 border-pink-200/40")}>
+                                            <div className="min-w-0">
+                                                <p className="text-[10px] font-semibold text-pink-500 uppercase tracking-wider">Active Path</p>
+                                                <p className="text-xs font-medium truncate">{(() => {
+                                                    const c = topology?.customers?.find((c: any) => c.customerUniqueId === selectedCustomerId)
+                                                    return c ? `${c.firstName} ${c.lastName}` : selectedCustomerId
+                                                })()}</p>
+                                            </div>
+                                            <button onClick={() => { setSelectedCustomerId(null); setMapZoom(13) }} className="text-pink-500 hover:text-pink-600">
+                                                <X className="h-3.5 w-3.5" />
+                                            </button>
                                         </div>
-                                        <div className="relative">
-                                            <div className="w-12 h-6 bg-muted rounded-full"></div>
-                                            <div className="absolute top-1 left-1 w-4 h-4 rounded-full bg-primary"></div>
-                                        </div>
+                                    )}
+
+                                    <div className="space-y-0.5">
+                                        {topology?.customers
+                                            ?.filter((c: any) => {
+                                                const name = `${c.firstName || ""} ${c.lastName || ""}`.toLowerCase()
+                                                const q = subscriberSearch.toLowerCase()
+                                                return name.includes(q) || (c.customerUniqueId || "").toLowerCase().includes(q) || (c.phoneNumber || "").includes(q)
+                                            })
+                                            .map((cust: any) => {
+                                                const isSelected = selectedCustomerId === cust.customerUniqueId
+                                                const ont = (cust.devices || []).find((d: any) => String(d.deviceType || "").toUpperCase() === "ONT")
+                                                const coords = ont ? [Number(cust.latitude ?? cust.lat ?? cust.location?.latitude), Number(cust.longitude ?? cust.lng ?? cust.lon ?? cust.location?.longitude)] : null
+                                                const hasCoords = coords && !isNaN(coords[0]) && !isNaN(coords[1])
+                                                return (
+                                                    <button
+                                                        key={cust.id}
+                                                        onClick={() => {
+                                                            if (!hasCoords) return toast.error("No coordinates for this subscriber")
+                                                            setSelectedCustomerId(cust.customerUniqueId)
+                                                            setFocusPosition(coords as [number, number])
+                                                            setMapZoom(18)
+                                                        }}
+                                                        className={cn(
+                                                            "w-full flex items-center justify-between p-2.5 rounded-lg text-left text-xs transition-colors",
+                                                            isSelected ? (isDark ? "bg-pink-500/10" : "bg-pink-50") : (isDark ? "hover:bg-white/5" : "hover:bg-gray-50"),
+                                                            !hasCoords && "opacity-40 cursor-not-allowed"
+                                                        )}
+                                                    >
+                                                        <div className="min-w-0">
+                                                            <p className="font-medium truncate">{cust.firstName} {cust.lastName}</p>
+                                                            <p className="text-[10px] text-muted-foreground font-mono truncate">{cust.customerUniqueId}</p>
+                                                        </div>
+                                                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                                                            <span className={cn("w-1.5 h-1.5 rounded-full", cust.status === "active" || cust.status === "online" ? "bg-emerald-500" : "bg-red-400")} />
+                                                            {hasCoords && <Target className="h-3 w-3 text-muted-foreground" />}
+                                                        </div>
+                                                    </button>
+                                                )
+                                            })}
+                                        {(!topology?.customers || topology.customers.length === 0) && (
+                                            <p className="text-[10px] text-muted-foreground text-center py-8">No subscriber data</p>
+                                        )}
                                     </div>
                                 </div>
-                            </div>
-                        </TabsContent>
-                    </Tabs>
-                </CardContainer>
-            </div>
-
-            {/* --- TOP CONTROLS --- */}
-            <div className="absolute top-5 right-5 z-[1001] flex gap-3">
-                {!showPanel && (
-                    <Button
-                        onClick={() => setShowPanel(true)}
-                        className="bg-background/90 backdrop-blur-md shadow-lg border hover:bg-background text-muted-foreground"
-                    >
-                        <MapIcon className="h-4 w-4 mr-2" />
-                        Show Panel
-                    </Button>
-                )}
-                <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={18} />
-                    <Input
-                        className="w-64 pl-10 bg-background/90 backdrop-blur-md shadow-lg border-border"
-                        placeholder="Search OLT, ONT, splitter, route..."
-                        value={search}
-                        onChange={e => setSearch(e.target.value)}
-                    />
+                            )}
+                        </div>
+                    </ScrollArea>
                 </div>
-                <Button
-                    variant="outline"
-                    size="icon"
-                    className="bg-background/90 backdrop-blur-md shadow-lg border hover:bg-background"
-                    onClick={() => setIsFullScreen(!isFullScreen)}
+
+                {/* Panel toggle */}
+                <button
+                    onClick={() => setPanelOpen(p => !p)}
+                    className={cn(
+                        "self-center -mr-3 w-6 h-10 flex items-center justify-center rounded-r-lg border border-l-0 shadow-md backdrop-blur-xl transition-colors",
+                        isDark ? "bg-gray-900/80 border-white/10 hover:bg-gray-800/80" : "bg-white/90 border-gray-200/60 hover:bg-gray-100"
+                    )}
                 >
-                    {isFullScreen ?
-                        <Minimize2 className="h-4 w-4" /> :
-                        <Maximize2 className="h-4 w-4" />
-                    }
-                </Button>
-                <Button
-                    variant="outline"
-                    size="icon"
-                    className="bg-background/90 backdrop-blur-md shadow-lg border hover:bg-background"
-                    onClick={() => setShowPanel(!showPanel)}
-                >
-                    <ChevronDown className={cn(
-                        "h-4 w-4 transition-transform duration-200",
-                        showPanel ? "rotate-180" : "rotate-0"
-                    )} />
-                </Button>
+                    {panelOpen ? <ChevronLeft className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                </button>
             </div>
 
-            {/* Hidden Input */}
-            <input
-                type="file"
-                ref={fileInputRef}
-                className="hidden"
-                accept=".kml,.kmz,.qgs,.dxf"
-                onChange={handleUpload}
-            />
+            {/* Zoom controls (bottom-right, above legend) */}
+            <div className="absolute bottom-[260px] right-4 z-[1001] flex flex-col gap-0.5">
+                {[
+                    { icon: "+", action: () => setMapZoom(z => Math.min(z + 1, 19)) },
+                    { icon: "−", action: () => setMapZoom(z => Math.max(z - 1, 3)) },
+                ].map((btn, i) => (
+                    <button
+                        key={i}
+                        onClick={btn.action}
+                        className={cn(
+                            "w-8 h-8 flex items-center justify-center text-sm font-medium rounded-lg border shadow-lg backdrop-blur-xl transition-colors",
+                            isDark ? "bg-gray-900/80 border-white/10 hover:bg-gray-800/80" : "bg-white/90 border-gray-200/60 hover:bg-gray-100",
+                            i === 0 && "rounded-b-none",
+                            i === 1 && "rounded-t-none border-t-0"
+                        )}
+                    >
+                        {btn.icon}
+                    </button>
+                ))}
+            </div>
+
+            {/* Hidden upload input */}
+            <input type="file" ref={fileInputRef} className="hidden" accept=".kml,.kmz,.qgs,.dxf" onChange={handleUpload} />
+
+            {/* Pulse animation keyframe */}
+            <style jsx global>{`
+                @keyframes pulse {
+                    0%, 100% { transform: scale(1); }
+                    50% { transform: scale(1.15); }
+                }
+            `}</style>
         </div>
     )
 }

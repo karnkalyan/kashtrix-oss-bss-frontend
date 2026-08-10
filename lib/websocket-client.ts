@@ -1,5 +1,6 @@
 // lib/websocket-client.ts
 import { toast } from "react-hot-toast";
+import { getWebSocketUrl } from "@/lib/api";
 
 export type WebSocketEvent =
   | "connected"
@@ -19,6 +20,7 @@ export type WebSocketEvent =
   | "system.status"
   | "system.notification"
   | "chat.message"
+  | "gps.location.updated"
   | "yeastar.service.available"
   | `device:${string}`
   | `network-operations:${string}`;
@@ -72,6 +74,7 @@ class WebSocketClient {
   private isConnecting = false;
   private connectionPromise: Promise<void> | null = null;
   private visibilityHandlerAttached = false;
+  private lastConnectionErrorAt = 0;
 
   constructor(config: WebSocketConfig = {}) {
     this.maxReconnectAttempts = config.maxReconnectAttempts ?? 10;
@@ -135,24 +138,7 @@ class WebSocketClient {
   }
 
   private getWebSocketUrl(): string {
-    if (!this.isBrowser()) return "";
-
-    const host = window.location.hostname;
-    const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-
-    if (host === "localhost" || host === "127.0.0.1") {
-      return "ws://localhost:3200/ws";
-    }
-
-    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "";
-    if (apiBase) {
-      if (apiBase.startsWith("/")) {
-        return `${protocol}://${window.location.host}/ws`;
-      }
-      return apiBase.replace(/^http/, "ws") + "/ws";
-    }
-
-    return `${protocol}://${window.location.host}/ws`;
+    return getWebSocketUrl();
   }
 
   async connect(): Promise<void> {
@@ -194,6 +180,7 @@ class WebSocketClient {
           this.isConnecting = false;
           this.state.isConnected = true;
           this.reconnectAttempts = 0;
+          this.lastConnectionErrorAt = 0;
           this.startHeartbeat();
           resolve();
         };
@@ -206,7 +193,11 @@ class WebSocketClient {
           this.isConnecting = false;
           const errorMsg =
             "WebSocket connection failed. Please check if the server is running.";
-          this.error(errorMsg, error);
+          const now = Date.now();
+          if (this.debug && now - this.lastConnectionErrorAt > 30000) {
+            console.warn("[WebSocket]", errorMsg, { url: wsUrl });
+          }
+          this.lastConnectionErrorAt = now;
           this.emit("error", { message: errorMsg, error });
           reject(new Error(errorMsg));
         };
@@ -371,7 +362,7 @@ class WebSocketClient {
 
     setTimeout(() => {
       this.connect().catch((error) => {
-        this.error("Reconnection failed:", error);
+        this.warnSafe("[WebSocket] Reconnection failed:", error);
       });
     }, delay);
   }

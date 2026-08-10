@@ -9,10 +9,8 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 
 export function CalendarSystemWidget() {
-  const { system: defaultSystem } = useCalendarSystem()
-  const [override, setOverride] = useState<CalendarSystem | null>(null)
-  const system = override || defaultSystem
-  return <section className="relative grid min-w-0 auto-rows-max gap-2" aria-label="Dashboard calendar"><div className="flex min-w-0 items-center justify-between rounded-lg border bg-card px-3 py-2"><div className="flex min-w-0 items-center gap-2 text-xs font-semibold"><CalendarDays className="size-4 shrink-0 text-primary" /><span className="truncate">Calendar</span></div><div className="ml-3 flex shrink-0 rounded-md bg-muted p-0.5">{(["AD", "BS"] as CalendarSystem[]).map(value => <button key={value} onClick={() => setOverride(value)} className={`rounded px-3 py-1 text-[10px] font-semibold ${system === value ? "bg-background text-primary shadow-sm" : "text-muted-foreground"}`}>{value}</button>)}</div></div><div className="relative min-w-0">{system === "BS" ? <NepaliCalendarWidget /> : <GregorianCalendarWidget />}</div></section>
+  const { system, setViewSystem } = useCalendarSystem()
+  return <section className="relative grid min-w-0 auto-rows-max gap-2" aria-label="Dashboard calendar"><div className="flex min-w-0 items-center justify-between rounded-lg border bg-card px-3 py-2"><div className="flex min-w-0 items-center gap-2 text-xs font-semibold"><CalendarDays className="size-4 shrink-0 text-primary" /><span className="truncate">Calendar</span></div><div className="ml-3 flex shrink-0 rounded-md bg-muted p-0.5">{(["AD", "BS"] as CalendarSystem[]).map(value => <button key={value} onClick={() => setViewSystem(value)} className={`rounded px-3 py-1 text-[10px] font-semibold ${system === value ? "bg-background text-primary shadow-sm" : "text-muted-foreground"}`}>{value}</button>)}</div></div><div className="relative min-w-0">{system === "BS" ? <NepaliCalendarWidget /> : <GregorianCalendarWidget />}</div></section>
 }
 
 function GregorianCalendarWidget() {

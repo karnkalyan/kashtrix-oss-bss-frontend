@@ -2,7 +2,7 @@
 
 import type React from "react";
 import { useState, useEffect } from "react";
-import { Menu, Search, X, Headset, CircleHelp, Settings } from "lucide-react";
+import { Menu, Search, X, Headset, CircleHelp, Settings, WalletCards } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,6 +30,7 @@ export function Navbar({ onMenuClick }: NavbarProps) {
   const [inquiryDialogOpen, setInquiryDialogOpen] = useState(false);
   const [activeCallsCount, setActiveCallsCount] = useState(0);
   const [yeastarConfigured, setYeastarConfigured] = useState(false);
+  const [walletBalance, setWalletBalance] = useState<number | null>(null);
   const { user } = useAuth();
   const { on } = useWebSocket();
   const roleName = typeof user?.role === "string" ? user.role : user?.role?.name;
@@ -37,6 +38,26 @@ export function Navbar({ onMenuClick }: NavbarProps) {
   const isCustomer = normalizedRole === "customer";
   const isGlobalRole = normalizedRole === "administrator" || normalizedRole.startsWith("global ");
   const assignedExtension = String(user?.yeastarExt || user?.extId || "").trim();
+  const resellerId = user?.resellerId ? Number(user.resellerId) : null;
+
+  useEffect(() => {
+    if (!resellerId) return;
+    let active = true;
+    const loadBalance = async () => {
+      try {
+        const response = await apiRequest<{ success: boolean; data?: { balance?: number | string; availableBalance?: number | string } }>("/wallets", { suppressToast: true });
+        if (active && response?.success) setWalletBalance(Number(response.data?.availableBalance ?? response.data?.balance ?? 0));
+      } catch {
+        if (active) setWalletBalance(null);
+      }
+    };
+    void loadBalance();
+    const timer = window.setInterval(() => void loadBalance(), 30_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [resellerId]);
 
   // Keyboard shortcut for search
   useEffect(() => {
@@ -138,24 +159,22 @@ export function Navbar({ onMenuClick }: NavbarProps) {
   // During SSR / before mount, default to light so server & client match.
   return (
     <>
-      <header
-        className="sticky top-0 z-40 w-full glass-navbar"
-      >
-        <div className="flex h-[58px] items-center px-3 md:px-5">
+      <header className="glass-navbar sticky top-0 z-40 w-full border-b border-border/70 bg-background/90 shadow-[0_1px_8px_rgba(15,23,42,0.035)] backdrop-blur-xl">
+        <div className="flex h-[68px] items-center gap-2 px-3 md:px-4 lg:px-5">
           <div className="flex items-center gap-2 md:gap-4">
-            <Button variant="ghost" size="icon" onClick={onMenuClick} aria-label="Toggle menu" className={isCustomer ? "hidden md:inline-flex" : ""}>
+            <Button variant="outline" size="icon" onClick={onMenuClick} aria-label="Toggle navigation" className={`h-9 w-9 rounded-xl border-border/70 bg-card shadow-sm ${isCustomer ? "hidden md:inline-flex" : ""}`}>
               <Menu className="h-5 w-5" />
             </Button>
           </div>
 
           {/* Search */}
-          <div className={`${showSearch ? "flex" : "hidden md:flex"} ml-2 max-w-[520px] flex-1 items-center px-2`}>
+          <div className={`${showSearch ? "flex" : "hidden md:flex"} ml-1 max-w-[640px] flex-1 items-center px-1 md:px-2`}>
             <div className="relative w-full group">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors duration-200" />
               <Input
                 type="search"
                 placeholder="Search customers, invoices, devices..."
-                className="h-9 w-full bg-muted/60 pl-9 pr-12 text-xs"
+                className="h-10 w-full rounded-xl border border-border/60 bg-card/80 pl-10 pr-16 text-sm shadow-sm transition-all placeholder:text-muted-foreground/75 hover:border-border focus-visible:border-primary/35 focus-visible:bg-background focus-visible:ring-2 focus-visible:ring-primary/10"
                 onClick={() => setSearchModalOpen(true)}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -172,31 +191,41 @@ export function Navbar({ onMenuClick }: NavbarProps) {
                 </Button>
               )}
               <kbd className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 hidden md:inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
-                <span className="text-xs">⌘</span>K
+                Ctrl K
               </kbd>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 ml-auto">
-            <button className="hidden h-9 items-center gap-3 rounded-[7px] border border-border bg-card px-3 font-data text-[11px] text-foreground transition-colors hover:bg-accent xl:flex" aria-label="Application version">
-              v1.4.0 <span className="text-muted-foreground">⌄</span>
-            </button>
-            <span className="mx-1 hidden h-6 w-px bg-border xl:block" aria-hidden="true" />
-            <Button variant="ghost" size="icon-sm" className="hidden lg:inline-flex" aria-label="Help"><CircleHelp className="size-4" /></Button>
-            <Button asChild variant="ghost" size="icon-sm" className="hidden lg:inline-flex"><Link href="/master-settings" aria-label="Settings"><Settings className="size-4" /></Link></Button>
+          <div className="ml-auto flex items-center gap-1 rounded-xl md:gap-1.5">
             {!isCustomer && !isGlobalRole && (
               <BranchSwitcher className="hidden lg:flex" />
             )}
+            {resellerId && (
+              <Link
+                href="/finance/wallet"
+                className="hidden h-9 items-center gap-2 rounded-xl border border-border/70 bg-card px-3 text-xs font-semibold text-primary shadow-sm md:inline-flex"
+                title="Available reseller wallet balance"
+              >
+                <WalletCards className="size-4" />
+                NPR {Number(walletBalance || 0).toLocaleString()}
+              </Link>
+            )}
+            <button className="hidden h-9 items-center gap-2 rounded-xl border border-border/70 bg-card px-3 font-data text-[11px] font-semibold text-foreground shadow-sm transition-colors hover:bg-accent xl:flex" aria-label="Application version">
+              v1.4.0 <span className="text-muted-foreground">⌄</span>
+            </button>
+            <span className="mx-0.5 hidden h-6 w-px bg-border xl:block" aria-hidden="true" />
+            <Button variant="ghost" size="icon-sm" className="hidden h-9 w-9 rounded-xl text-muted-foreground hover:bg-accent hover:text-foreground lg:inline-flex" aria-label="Help center"><CircleHelp className="size-4" /></Button>
+            <Button asChild variant="ghost" size="icon-sm" className="hidden h-9 w-9 rounded-xl text-muted-foreground hover:bg-accent hover:text-foreground lg:inline-flex"><Link href="/master-settings" aria-label="System settings"><Settings className="size-4" /></Link></Button>
             
             {/* Inquiry Button */}
             {yeastarConfigured && (
               <Button
                 variant="ghost"
                 size="icon"
-                className="hidden md:flex relative"
+                className="relative hidden h-9 w-9 rounded-xl text-muted-foreground hover:bg-accent hover:text-foreground md:flex"
                 onClick={() => setInquiryDialogOpen(true)}
-                aria-label="Call Inquiry"
-                title="Call Inquiry"
+                aria-label="Call inquiry"
+                title="Call inquiry"
               >
                 <Headset className="h-5 w-5" />
                 {activeCallsCount > 0 && (
@@ -214,7 +243,7 @@ export function Navbar({ onMenuClick }: NavbarProps) {
             <Button
               variant="ghost"
               size="icon"
-              className="md:hidden"
+              className="h-9 w-9 rounded-xl md:hidden"
               onClick={() => setShowSearch(!showSearch)}
               aria-label={showSearch ? "Close search" : "Open search"}
             >

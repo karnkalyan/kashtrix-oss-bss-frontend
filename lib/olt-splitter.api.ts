@@ -1,6 +1,6 @@
 import { apiRequest } from "@/lib/api"
 import { OLT, OLTStats, OLTPort, CreateOLTDTO, UpdateOLTDTO } from "@/types/index"
-import { Splitter, SplitterStats, CreateSplitterDTO, UpdateSplitterDTO } from "@/types/inde"
+import { Splitter, SplitterStats, CreateSplitterDTO, UpdateSplitterDTO } from "@/types/index"
 
 // OLT specific API functions
 export const oltApi = {

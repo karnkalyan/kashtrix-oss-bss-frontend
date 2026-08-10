@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
-import { Loader2, TrendingDown, TrendingUp } from "lucide-react"
+import { Loader2 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
 export function RevenueChart() {
@@ -40,10 +40,6 @@ export function RevenueChart() {
           <CardTitle className="text-[15px]">Revenue Overview</CardTitle>
           <CardDescription className="mt-0.5 text-[11px]">Collected payments in Nepal Rupees</CardDescription>
         </div>
-        <select aria-label="Revenue period" className="h-8 rounded-[6px] border border-border bg-background px-2.5 text-[11px] text-foreground outline-none focus:ring-2 focus:ring-ring">
-          <option>Quarterly</option>
-          <option>Monthly</option>
-        </select>
       </CardHeader>
       <CardContent className="p-0">
         <div className="h-[280px] min-h-0 min-w-0 px-3 pb-1 pt-4 sm:h-[310px]">
@@ -74,24 +70,20 @@ export function RevenueChart() {
           )}
         </div>
 
-        <div className="grid border-t sm:grid-cols-4">
-          <Metric label="Total Revenue" value={money(totals.total)} trend="18.2% vs last quarter" />
-          <Metric label="Average Revenue" value={money(totals.average)} trend="12.4% vs last quarter" />
-          <Metric label="Collection Rate" value={totals.total > 0 ? "98.2%" : "0%"} trend="2.1% vs last quarter" />
-          <Metric label="Outstanding" value="NPR 0" trend="5.3% vs last quarter" down />
+        <div className="grid border-t sm:grid-cols-2">
+          <Metric label="Total Collected Revenue" value={money(totals.total)} />
+          <Metric label="Average Per Reported Period" value={money(totals.average)} />
         </div>
       </CardContent>
     </Card>
   )
 }
 
-function Metric({ label, value, trend, down = false }: { label: string; value: string; trend: string; down?: boolean }) {
-  const TrendIcon = down ? TrendingDown : TrendingUp
+function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="border-b border-border px-4 py-3 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0">
       <p className="text-[10px] text-muted-foreground">{label}</p>
       <p className="mt-1 truncate font-data text-[15px] font-semibold text-foreground">{value}</p>
-      <p className={`mt-1 flex items-center gap-1 text-[9px] ${down ? "text-[var(--status-danger)]" : "text-[var(--status-success)]"}`}><TrendIcon className="size-2.5" />{trend}</p>
     </div>
   )
 }

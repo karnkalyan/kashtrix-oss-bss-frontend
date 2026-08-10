@@ -37,21 +37,46 @@ export function getWebSocketUrl(): string {
     return "";
   }
 
-  const baseUrl = getDynamicBaseUrl();
-  if (baseUrl.startsWith("/")) {
-    return `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
+  const hostname = window.location.hostname;
+  const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+  const configuredWebSocketUrl = process.env.NEXT_PUBLIC_WEBSOCKET_URL;
+  if (configuredWebSocketUrl) return configuredWebSocketUrl;
+
+  const configuredBase = process.env.NEXT_PUBLIC_API_BASE_URL;
+  if (configuredBase && !configuredBase.startsWith("/")) {
+    try {
+      const url = new URL(configuredBase);
+      const configuredForLoopback = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+      const browserIsLoopback = hostname === "localhost" || hostname === "127.0.0.1";
+
+      // A URL compiled as localhost is valid on the developer's machine, but from
+      // another LAN browser localhost means that browser itself. Keep the configured
+      // port and use the host that served the frontend.
+      if (configuredForLoopback && !browserIsLoopback) {
+        url.hostname = hostname;
+      }
+
+      // HTTPS pages cannot open an insecure ws:// connection. Production should
+      // terminate WebSockets at the same reverse proxy that serves the frontend.
+      if (window.location.protocol === "https:" && url.protocol === "http:") {
+        return `wss://${window.location.host}/ws`;
+      }
+
+      url.protocol = url.protocol.replace("http", "ws");
+      url.pathname = "/ws";
+      url.search = "";
+      url.hash = "";
+      return url.toString();
+    } catch {}
   }
-  try {
-    const url = new URL(baseUrl);
-    // Change the protocol to ws or wss
-    url.protocol = url.protocol.replace("http", "ws");
-    // Change the path to /ws
-    url.pathname = "/ws";
-    return url.toString();
-  } catch {
-    const hostname = window.location.hostname;
-    return `ws://${hostname}:3200/ws`;
+
+  // Same-origin production proxy (/ws)
+  if (hostname !== "localhost" && hostname !== "127.0.0.1" && !hostname.startsWith("192.168.") && !hostname.startsWith("10.")) {
+    return `${protocol}://${window.location.host}/ws`;
   }
+
+  // Local/LAN dev environment: Backend runs on port 3200
+  return `${protocol}://${hostname}:3200/ws`;
 }
 
 export function buildApiAssetUrl(assetPath?: string | null): string {
@@ -101,6 +126,15 @@ async function parseResponsePayload(res: Response) {
       return null;
     }
   }
+}
+
+function publicErrorMessage(status: number) {
+  if (status >= 500) return "Server error. Please try again shortly.";
+  if (status === 404) return "The requested resource was not found.";
+  if (status === 403) return "You do not have permission to perform this action.";
+  if (status === 401) return "Your session is no longer valid.";
+  if (status === 429) return "Too many requests. Please wait and try again.";
+  return "The request could not be completed.";
 }
 
 // Global state for token refresh mutex
@@ -154,8 +188,8 @@ export async function apiRequest<T = any>(
   let response: Response;
   try {
     response = await fetch(url, options);
-  } catch (err: any) {
-    const msg = err?.message || "Network error";
+  } catch {
+    const msg = "Network error. Check your connection and try again.";
     if (isClient() && !suppressToast) toast.error(msg);
     throw new Error(msg);
   }
@@ -220,11 +254,12 @@ export async function apiRequest<T = any>(
 
     if (response.status === 402) {
       notifyLicenseExpired(payload, payloadStr);
-      throw new Error(payloadStr);
+      throw new Error("A valid license is required.");
     }
 
-    if (isClient() && !suppressToast) toast.error(payloadStr);
-    throw new Error(payloadStr);
+    const safeMessage = publicErrorMessage(response.status);
+    if (isClient() && !suppressToast) toast.error(safeMessage);
+    throw new Error(safeMessage);
   }
 
   // Success parsing

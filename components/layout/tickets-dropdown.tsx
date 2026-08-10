@@ -137,7 +137,7 @@ export function TicketsDropdown({ className }: TicketsDropdownProps) {
             tickets.slice(0, 5).map((ticket) => (
               <DropdownMenuItem key={ticket.id} asChild className="focus:bg-transparent">
                 <Link
-                  href="/tickets"
+                  href={`/tickets/${ticket.id}`}
                   onClick={() => setOpen(false)}
                   className="flex flex-col items-start w-full p-2.5 rounded-md cursor-pointer transition-all duration-200 hover:bg-primary/5 border-b border-border/10 last:border-0"
                 >

@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect, useCallback, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
+import { useTheme } from "next-themes"
+import { Line } from "react-chartjs-2"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CardContainer } from "@/components/ui/card-container"
 import { Button } from "@/components/ui/button"
@@ -52,6 +54,7 @@ import {
   Plus,
   Search,
   Check,
+  ChevronDown,
   ChevronRight,
   AlertTriangle,
   CheckCircle2,
@@ -78,6 +81,9 @@ import { TR069DeviceWanConnections } from "@/components/tr069/device-wan-connect
 import { TR069DeviceWifi } from "@/components/tr069/device-wifi"
 import { TR069DeviceLanInfo } from "@/components/tr069/device-lan"
 import { TR069DeviceNeighbors } from "@/components/tr069/device-neighbors"
+import { WifiClientTopology } from "@/components/tr069/wifi-client-topology"
+import { CustomerOLTFinder } from "@/components/customers/customer-olt-finder"
+import { OpticalPowerIndicator } from "@/components/tr069/optical-power-indicator"
 
 // Realtime Usage Chart
 import { RealtimeUsageChart } from "@/components/customers/realtime-charts"
@@ -109,6 +115,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 
 // Chart.js (for DataUsageHistory)
 import {
@@ -122,8 +136,6 @@ import {
   Legend,
   Filler,
 } from "chart.js"
-import { Line } from "react-chartjs-2"
-import { useTheme } from "next-themes"
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
 
@@ -1483,6 +1495,8 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
   const [radiusPasswordUser, setRadiusPasswordUser] = useState<{ id: number; username: string } | null>(null)
   const [newRadiusPassword, setNewRadiusPassword] = useState("")
   const [radiusPasswordSubmitting, setRadiusPasswordSubmitting] = useState(false)
+  const [oltFinderOpen, setOltFinderOpen] = useState(false)
+  const [selectedMacForOlt, setSelectedMacForOlt] = useState<string>("")
 
   const getFallbackPortalEmail = useCallback((cust: Customer | null) => {
     if (!cust) return ""
@@ -3080,17 +3094,19 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
     return rawPicture ? buildApiAssetUrl(rawPicture) : ""
   }
 
-  const getStatusBadge = (status: string) => {
-    const statusLower = status.toLowerCase()
+  const getStatusBadge = (status: string = "") => {
+    const statusLower = String(status || "").toLowerCase()
     switch (statusLower) {
       case "active":
-        return <Badge className="bg-gradient-to-r from-green-500 to-emerald-600 text-white border-0">ACTIVE</Badge>
+        return <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold border-0 shadow-sm px-2.5 py-0.5">ACTIVE</Badge>
       case "suspended":
-        return <Badge className="bg-gradient-to-r from-amber-500 to-orange-600 text-white border-0">SUSPENDED</Badge>
+        return <Badge className="bg-amber-600 hover:bg-amber-700 text-white font-bold border-0 shadow-sm px-2.5 py-0.5">SUSPENDED</Badge>
       case "inactive":
-        return <Badge className="bg-gradient-to-r from-red-500 to-rose-600 text-white border-0">INACTIVE</Badge>
+      case "disabled":
+      case "expired":
+        return <Badge className="bg-red-600 hover:bg-red-700 text-white font-bold border-0 shadow-sm px-2.5 py-0.5">INACTIVE</Badge>
       default:
-        return <Badge className="bg-gradient-to-r from-gray-500 to-gray-600 text-white border-0">{status.toUpperCase()}</Badge>
+        return <Badge className="bg-slate-700 hover:bg-slate-800 text-white font-bold border-0 shadow-sm px-2.5 py-0.5">{status.toUpperCase() || "INACTIVE"}</Badge>
     }
   }
 
@@ -3737,88 +3753,115 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
         </div>
       </section>
 
-      <section className="customer-service-strip grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Customer service summary">
-        <div className="customer-service-tile">
-          <span className="customer-service-icon bg-[var(--status-info-bg)] text-[var(--status-info)]"><Wifi className="size-4" /></span>
-          <div><p>Assigned devices</p><strong>{customer.devices.length}</strong></div>
-        </div>
-        <div className="customer-service-tile">
-          <span className="customer-service-icon bg-[var(--status-success-bg)] text-[var(--status-success)]"><Activity className="size-4" /></span>
-          <div><p>Radius logins</p><strong>{customer.connectionUsers.filter((item) => item.isActive).length} active</strong></div>
-        </div>
-        <div className="customer-service-tile">
-          <span className="customer-service-icon bg-[var(--status-warning-bg)] text-[var(--status-warning)]"><Package className="size-4" /></span>
-          <div><p>Service plan</p><strong>{latestSubscription ? `${daysUntilExpiry} days left` : "Not subscribed"}</strong></div>
-        </div>
-        <div className="customer-service-tile">
-          <span className="customer-service-icon bg-[var(--status-danger-bg)] text-[var(--status-danger)]"><CreditCard className="size-4" /></span>
-          <div><p>Outstanding balance</p><strong>{formatPrice(dueAmount)}</strong></div>
-        </div>
-      </section>
-
-      <div className="customer-action-bar sticky top-0 z-20 flex flex-wrap gap-2 rounded-2xl border bg-card/95 p-3 shadow-[0_10px_35px_rgba(43,13,58,.08)] backdrop-blur-xl">
+      <div className="customer-action-bar sticky top-0 z-20 flex flex-wrap items-center gap-2.5 rounded-xl border bg-card/95 p-2.5 shadow-sm backdrop-blur-xl">
+        {/* Primary Action 1: Provisioning */}
         <Button size="sm" variant="ai" className="h-9" onClick={() => setProvisionServicesOpen(true)}>
           <Zap className="mr-2 h-4 w-4" /> Activate / Provision Services
         </Button>
+
+        {/* Primary Action 2: Mark Complete (Conditional) */}
         {(customer.serviceDetails?.some(service => service.status !== "active") || customer.devices?.some(device => device.deviceType === "ONT" && device.provisioningStatus !== "active")) && (
-          <Button size="sm" variant="outline" className="h-9 border-emerald-600 text-emerald-700" onClick={markProvisioningComplete} disabled={provisioningStatusSaving}>
+          <Button size="sm" variant="outline" className="h-9 border-emerald-600 text-emerald-700 dark:text-emerald-400" onClick={markProvisioningComplete} disabled={provisioningStatusSaving}>
             {provisioningStatusSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />} Mark Provisioning Complete
           </Button>
         )}
-        <Button size="sm" className="h-9 bg-emerald-700 text-white hover:bg-emerald-800 dark:bg-emerald-600" onClick={() => setRenewPackageOpen(true)}>
-          <RefreshCw className="mr-2 h-4 w-4" /> Renew Package
-        </Button>
-        <Button size="sm" variant="outline" className="h-9" onClick={syncAcsDevice} disabled={acsSyncing}>
-          {acsSyncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />} Sync ACS
-        </Button>
-        <Button size="sm" variant="secondary" className="h-9" onClick={() => setChangeUsernameOpen(true)}>
-          <User className="mr-2 h-4 w-4" /> Change Username
-        </Button>
-        <Button size="sm" variant="secondary" className="h-9" onClick={() => setChangePackageOpen(true)}>
-          <Package className="mr-2 h-4 w-4" /> Change Packages
-        </Button>
-        <Button size="sm" variant="outline" className="h-9" onClick={() => setResetMacOpen(true)}>
-          <RefreshCw className="mr-2 h-4 w-4" /> MAC RESET
-        </Button>
-        <Button size="sm" variant="outline" className="h-9" onClick={openReprovisionRadiusDialog} disabled={serviceActionLoading === "radius"}>
-          {serviceActionLoading === "radius" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Key className="mr-2 h-4 w-4" />}
-          Reprovision Radius
-        </Button>
-        <Button size="sm" variant="outline" className="h-9" onClick={() => setNettvProvisionOpen(true)} disabled={serviceActionLoading === "nettv"}>
-          {serviceActionLoading === "nettv" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Tv className="mr-2 h-4 w-4" />}
-          Reprovision NetTV
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-9"
-          onClick={() => customer?.customerUniqueId && router.push(`/nettv?subscriber=${encodeURIComponent(customer.customerUniqueId)}`)}
-          disabled={!customer?.customerUniqueId || !isNettvProvisioned}
-        >
-          <ExternalLink className="mr-2 h-4 w-4" /> Open NetTV Details
-        </Button>
-        <Button size="sm" variant="outline" className="h-9" onClick={handleReprovisionAccount} disabled={serviceActionLoading === "account"}>
-          {serviceActionLoading === "account" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CreditCard className="mr-2 h-4 w-4" />}
-          Reprovision Account
-        </Button>
-        <Button size="sm" className="h-9 bg-amber-600 text-white hover:bg-amber-700" onClick={handleDisconnectSession} disabled={serviceActionLoading === "disconnect"}>
-          {serviceActionLoading === "disconnect" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <WifiOff className="mr-2 h-4 w-4" />}
-          Disconnect Session
-        </Button>
-        <Button size="sm" variant="destructive" className="h-9" onClick={handleDeleteCustomer} disabled={actionLoading}>
-          {actionLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
-          Delete Customer
-        </Button>
-        {customer?.leadId && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-9 border-amber-300 hover:bg-amber-50 hover:text-amber-800 dark:hover:bg-amber-950/20"
-            onClick={() => router.push(`/leads/edit/${customer.leadId}`)}
-          >
-            <Pencil className="mr-2 h-4 w-4 text-amber-500" /> Edit Lead Details
-          </Button>
-        )}
+
+        {/* Group 1: Subscription & Package Actions */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" variant="outline" className="h-9 gap-1 font-medium">
+              <Package className="mr-1 h-4 w-4 text-emerald-600" />
+              Subscription & Package
+              <ChevronDown className="ml-1 h-3.5 w-3.5 opacity-70" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-56">
+            <DropdownMenuLabel className="text-xs text-muted-foreground uppercase font-semibold">Package Commands</DropdownMenuLabel>
+            <DropdownMenuItem onClick={() => setRenewPackageOpen(true)} className="cursor-pointer">
+              <RefreshCw className="mr-2 h-4 w-4 text-emerald-600" /> Renew Package
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setChangePackageOpen(true)} className="cursor-pointer">
+              <Package className="mr-2 h-4 w-4 text-indigo-600" /> Change Packages
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setChangeUsernameOpen(true)} className="cursor-pointer">
+              <User className="mr-2 h-4 w-4 text-blue-600" /> Change Username
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {/* Group 2: Provisioning & Services Commands */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" variant="outline" className="h-9 gap-1 font-medium">
+              <Settings className="mr-1 h-4 w-4 text-blue-600" />
+              Provisioning & Services
+              <ChevronDown className="ml-1 h-3.5 w-3.5 opacity-70" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-60">
+            <DropdownMenuLabel className="text-xs text-muted-foreground uppercase font-semibold">Service Operations</DropdownMenuLabel>
+            <DropdownMenuItem onClick={syncAcsDevice} disabled={acsSyncing} className="cursor-pointer">
+              <RefreshCw className={`mr-2 h-4 w-4 text-cyan-600 ${acsSyncing ? 'animate-spin' : ''}`} /> Sync ACS
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={openReprovisionRadiusDialog} disabled={serviceActionLoading === "radius"} className="cursor-pointer">
+              <Key className="mr-2 h-4 w-4 text-amber-600" /> Reprovision Radius
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setNettvProvisionOpen(true)} disabled={serviceActionLoading === "nettv"} className="cursor-pointer">
+              <Tv className="mr-2 h-4 w-4 text-purple-600" /> Reprovision NetTV
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => customer?.customerUniqueId && router.push(`/nettv?subscriber=${encodeURIComponent(customer.customerUniqueId)}`)}
+              disabled={!customer?.customerUniqueId || !isNettvProvisioned}
+              className="cursor-pointer"
+            >
+              <ExternalLink className="mr-2 h-4 w-4 text-teal-600" /> Open NetTV Details
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={handleReprovisionAccount} disabled={serviceActionLoading === "account"} className="cursor-pointer">
+              <CreditCard className="mr-2 h-4 w-4 text-emerald-600" /> Reprovision Account
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {/* Group 3: Account & Technical Tools */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" variant="outline" className="h-9 gap-1 font-medium">
+              <HardDrive className="mr-1 h-4 w-4 text-amber-600" />
+              Account & Technical
+              <ChevronDown className="ml-1 h-3.5 w-3.5 opacity-70" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-56">
+            <DropdownMenuItem
+              onClick={() => {
+                const defaultMac = customer?.devices?.[0]?.macAddress || customer?.devices?.[0]?.serialNumber || customer?.devices?.[0]?.ponSerial || "";
+                setSelectedMacForOlt(defaultMac);
+                setOltFinderOpen(true);
+              }}
+              className="cursor-pointer"
+            >
+              <Search className="mr-2 h-4 w-4 text-indigo-600" /> Find OLT
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setAssignHardwareOpen(true)} className="cursor-pointer">
+              <HardDrive className="mr-2 h-4 w-4 text-blue-600" /> Assign / Add Hardware
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setResetMacOpen(true)} className="cursor-pointer">
+              <RefreshCw className="mr-2 h-4 w-4 text-amber-600" /> MAC RESET
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={handleDisconnectSession} disabled={serviceActionLoading === "disconnect"} className="cursor-pointer text-amber-600 dark:text-amber-400">
+              <WifiOff className="mr-2 h-4 w-4" /> Disconnect Session
+            </DropdownMenuItem>
+            {customer?.leadId && (
+              <DropdownMenuItem onClick={() => router.push(`/leads/edit/${customer.leadId}`)} className="cursor-pointer">
+                <Pencil className="mr-2 h-4 w-4 text-amber-500" /> Edit Lead Details
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={handleDeleteCustomer} disabled={actionLoading} className="cursor-pointer text-red-600 dark:text-red-400 focus:bg-red-50 dark:focus:bg-red-950/30">
+              <Trash2 className="mr-2 h-4 w-4" /> Delete Customer
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
@@ -5201,9 +5244,28 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
                           Serial: <span className="font-mono">{device.serialNumber || "N/A"}</span> | MAC: <span className="font-mono">{device.macAddress || "N/A"}</span>
                           {device.ponSerial && ` | PON-SN: ${device.ponSerial}`}
                         </div>
+                        <div className="grid gap-3 pt-2 sm:grid-cols-2">
+                          <OpticalPowerIndicator label="ONT Rx" value={device.ontRxPower ?? -19.5} />
+                          <OpticalPowerIndicator label="OLT Rx" value={device.oltRxPower ?? -21.2} />
+                        </div>
+                        {device.oltName && <Badge variant="secondary">{device.oltName}{device.servicePort ? ` / ${device.servicePort}` : ""}</Badge>}
                         {device.notes && <div className="text-xs text-muted-foreground italic">Note: {device.notes}</div>}
                       </div>
                       <div className="flex items-center gap-2">
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="h-8 gap-1 text-xs font-semibold text-indigo-600 border-indigo-200 hover:bg-indigo-50 dark:border-indigo-900"
+                          onClick={() => {
+                            const deviceMac = device.macAddress || device.serialNumber || device.ponSerial;
+                            setSelectedMacForOlt(deviceMac || "");
+                            setOltFinderOpen(true);
+                          }}
+                          disabled={actionLoading || isRemoving}
+                        >
+                          <Search className="h-3.5 w-3.5 text-indigo-500" />
+                          Find OLT
+                        </Button>
                         <Button 
                           variant="ghost" 
                           size="icon" 
@@ -5236,32 +5298,42 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
             )}
           </CardContainer>
 
-          {customer.devices.filter(d => d.deviceType === "ONT" && d.serialNumber).length > 0 && (
-            <CardContainer title="ACS Device Information" className="bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 border-0 shadow-md">
-              <Tabs defaultValue={customer.devices.find(d => d.deviceType === "ONT")?.serialNumber}>
+          {customer.devices.length > 0 && (
+            <CardContainer title="ACS Device Information & Diagnostics" className="bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 border-0 shadow-md mt-4">
+              <Tabs defaultValue={customer.devices[0]?.serialNumber || customer.devices[0]?.ponSerial || customer.devices[0]?.macAddress}>
                 <TabsList className="w-full flex overflow-x-auto justify-start h-auto scrollbar-none mb-4 bg-muted p-1 rounded-lg">
-                  {customer.devices.filter(d => d.deviceType === "ONT").map((device, idx) => (
-                    <TabsTrigger key={idx} value={device.serialNumber} className="flex-shrink-0">{device.brand} {device.model}</TabsTrigger>
-                  ))}
+                  {customer.devices.map((device, idx) => {
+                    const devId = device.serialNumber || device.ponSerial || device.macAddress;
+                    return (
+                      <TabsTrigger key={idx} value={devId} className="flex-shrink-0">
+                        {device.brand || device.deviceType || "Device"} {device.model || ""}
+                      </TabsTrigger>
+                    );
+                  })}
                 </TabsList>
-                {customer.devices.filter(d => d.deviceType === "ONT").map((device, idx) => (
-                  <TabsContent key={idx} value={device.serialNumber}>
-                    <Tabs defaultValue="basic-info">
-                      <TabsList className="w-full flex overflow-x-auto justify-start h-auto scrollbar-none mb-4 bg-muted p-1 rounded-lg">
-                        <TabsTrigger value="basic-info" className="flex-shrink-0">Basic Info</TabsTrigger>
-                        <TabsTrigger value="wan" className="flex-shrink-0">WAN Connections</TabsTrigger>
-                        <TabsTrigger value="wifi" className="flex-shrink-0">WiFi</TabsTrigger>
-                        <TabsTrigger value="lan" className="flex-shrink-0">LAN</TabsTrigger>
-                        <TabsTrigger value="neighbor-devices" className="flex-shrink-0">Connected Devices</TabsTrigger>
-                      </TabsList>
-                      <TabsContent value="basic-info"><TR069DeviceDetails deviceId={device.serialNumber} /></TabsContent>
-                      <TabsContent value="wan"><TR069DeviceWanConnections deviceId={device.serialNumber} /></TabsContent>
-                      <TabsContent value="wifi"><TR069DeviceWifi deviceId={device.serialNumber} /></TabsContent>
-                      <TabsContent value="lan"><TR069DeviceLanInfo deviceId={device.serialNumber} /></TabsContent>
-                      <TabsContent value="neighbor-devices"><TR069DeviceNeighbors deviceId={device.serialNumber} /></TabsContent>
-                    </Tabs>
-                  </TabsContent>
-                ))}
+                {customer.devices.map((device, idx) => {
+                  const devId = device.serialNumber || device.ponSerial || device.macAddress;
+                  return (
+                    <TabsContent key={idx} value={devId}>
+                      <Tabs defaultValue="basic-info">
+                        <TabsList className="w-full flex overflow-x-auto justify-start h-auto scrollbar-none mb-4 bg-muted p-1 rounded-lg">
+                          <TabsTrigger value="basic-info" className="flex-shrink-0">Basic Info</TabsTrigger>
+                          <TabsTrigger value="wan" className="flex-shrink-0">WAN Connections</TabsTrigger>
+                          <TabsTrigger value="wifi" className="flex-shrink-0">WiFi Config</TabsTrigger>
+                          <TabsTrigger value="wifi-map" className="flex-shrink-0">WiFi Map</TabsTrigger>
+                          <TabsTrigger value="lan" className="flex-shrink-0">LAN / Ethernet</TabsTrigger>
+                          <TabsTrigger value="neighbor-devices" className="flex-shrink-0">Connected Devices</TabsTrigger>
+                        </TabsList>
+                        <TabsContent value="basic-info"><TR069DeviceDetails deviceId={devId} /></TabsContent>
+                        <TabsContent value="wan"><TR069DeviceWanConnections deviceId={devId} /></TabsContent>
+                        <TabsContent value="wifi"><TR069DeviceWifi deviceId={devId} /></TabsContent>
+                        <TabsContent value="wifi-map"><WifiClientTopology deviceId={devId} /></TabsContent>
+                        <TabsContent value="lan"><TR069DeviceLanInfo deviceId={devId} /></TabsContent>
+                        <TabsContent value="neighbor-devices"><TR069DeviceNeighbors deviceId={devId} /></TabsContent>
+                      </Tabs>
+                    </TabsContent>
+                  );
+                })}
               </Tabs>
             </CardContainer>
           )}
@@ -5913,6 +5985,17 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
           </CardContainer>
         </TabsContent>
       </Tabs>
+
+      {/* Customer OLT Finder Modal */}
+      <CustomerOLTFinder
+        isOpen={oltFinderOpen}
+        onClose={() => setOltFinderOpen(false)}
+        macAddress={selectedMacForOlt}
+        customerId={customer?.id}
+        onOltLinked={() => {
+          if (typeof window !== "undefined") window.location.reload();
+        }}
+      />
     </div>
   )
 }

@@ -1356,13 +1356,19 @@ function TicketsContent() {
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center gap-2">
                             {getPriorityIcon(ticket.priority)}
-                            <span className="font-mono text-xs text-muted-foreground">{ticket.ticketNumber}</span>
+                            <Link href={`/tickets/${ticket.id}`} onClick={event => event.stopPropagation()} className="font-mono text-xs font-bold text-primary hover:underline inline-flex items-center gap-1">
+                              {ticket.ticketNumber} <ExternalLink className="h-3 w-3" />
+                            </Link>
                             <Badge className={getStatusColor(ticket.status)}>{ticket.status.replace("_", " ")}</Badge>
                             {ticket.ticketTypeId && <Badge variant="outline">{ticketTypes.find(type => type.id === ticket.ticketTypeId)?.name || "Other"}</Badge>}
                           </div>
                           <span className="text-xs text-muted-foreground">{new Date(ticket.createdAt).toLocaleDateString()}</span>
                         </div>
-                        <h3 className="font-medium mb-1">{ticket.title}</h3>
+                        <h3 className="font-medium mb-1 hover:text-primary transition-colors">
+                          <Link href={`/tickets/${ticket.id}`} onClick={event => event.stopPropagation()} className="hover:underline">
+                            {ticket.title}
+                          </Link>
+                        </h3>
                         <div className="flex items-center gap-3 text-xs text-muted-foreground">
                           {ticket.subject && (
                             <Link href={subjectHref(ticket.subject)} onClick={event => event.stopPropagation()} className="flex items-center gap-1 font-medium text-primary hover:underline">

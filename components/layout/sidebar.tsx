@@ -29,6 +29,8 @@ import {
   Building,
   RefreshCw,
   Bot,
+  Building2,
+  Navigation,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -89,7 +91,7 @@ type ActiveIspResponse = {
 // Organize menu items into categories
 const menuCategories: MenuCategory[] = [
   {
-    category: "Main",
+    category: "Dashboard",
     items: [
       {
         title: "Dashboard",
@@ -103,49 +105,49 @@ const menuCategories: MenuCategory[] = [
     ],
   },
   {
-    category: "Management",
+    category: "Administration",
     items: [
       {
-        title: "Administrative Management",
+        title: "Access Control",
         icon: Shield,
         permission: "users_read",
         submenu: [
-          { title: "Users", href: "/admin/users", permission: "users_read" },
-          { title: "Roles", href: "/admin/roles", permission: "roles_read" },
-          { title: "Audit Logs", href: "/admin/audit-log", permission: "audit_log_read" },
+          { title: "User Accounts", href: "/admin/users", permission: "users_read" },
+          { title: "Roles & Permissions", href: "/admin/roles", permission: "roles_read" },
+          { title: "Access Audit Trail", href: "/admin/audit-log", permission: "audit_log_read" },
         ],
       },
       {
-        title: "Customer Management",
+        title: "Customers",
         icon: Users,
         permission: "customer_read",
         submenu: [
-          { title: "All Customers", href: "/customers/all", permission: "customers_list" },
-          { title: "Add New Customer", href: "/customers/new", permission: "customers_create" },
+          { title: "Customer Directory", href: "/customers/all", permission: "customers_list" },
+          { title: "Create Customer", href: "/customers/new", permission: "customers_create" },
         ],
       },
       {
-        title: "Branch Management",
+        title: "Branches",
         icon: Building,
         permission: "branches_read",
         submenu: [
-          { title: "Branches", href: "/branch", permission: "branches_read" },
+          { title: "Branch Directory", href: "/branch", permission: "branches_read" },
         ],
       },
       {
-        title: "Department Management",
+        title: "Departments",
         icon: Building,
         permission: "departments_read",
         submenu: [
-          { title: "Departments", href: "/department", permission: "departments_read" },
+          { title: "Department Directory", href: "/department", permission: "departments_read" },
         ],
       },
       {
-        title: "Membership Management",
+        title: "Memberships",
         icon: Crown,
         permission: "membership_read",
         submenu: [
-          { title: "Membership", href: "/membership", permission: "membership_read" },
+          { title: "Membership Plans", href: "/membership", permission: "membership_read" },
         ],
       },
     ],
@@ -201,30 +203,30 @@ const menuCategories: MenuCategory[] = [
     category: "Sales & Marketing",
     items: [
       {
-        title: "Lead Management (CRM)",
+        title: "Leads",
         icon: UserPlus,
         permission: "lead_read",
         submenu: [
+          { title: "Lead Pipeline", href: "/leads", permission: "leads_manage" },
           { title: "Create Lead", href: "/leads/create", permission: "lead_create" },
-          { title: "Lead Management", href: "/leads", permission: "leads_manage" },
-          { title: "Qualified", href: "/leads/qualified", permission: "lead_read" },
-          { title: "Unqualified", href: "/leads/unqualified", permission: "lead_read" },
-          { title: "Converted", href: "/leads/converted", permission: "lead_read" },
-          { title: "Follow-up Tracking", href: "/leads/follow-ups", permission: "lead_read" },
+          { title: "Follow-ups", href: "/leads/follow-ups", permission: "lead_read" },
+          { title: "Qualified Leads", href: "/leads/qualified", permission: "lead_read" },
+          { title: "Unqualified Leads", href: "/leads/unqualified", permission: "lead_read" },
+          { title: "Converted Leads", href: "/leads/converted", permission: "lead_read" },
           { title: "Import Leads", href: "/leads/import", permission: "lead_create" },
           { title: "Lead Reports", href: "/leads/reports", permission: "reports_read" },
         ],
       },
       {
-        title: "Existing ISP Migration",
+        title: "Migrations",
         icon: RefreshCw,
         permission: "existingisp_read",
         submenu: [
-          { title: "Existing ISP Data", href: "/existing-isp", permission: "existingisp_read" },
+          { title: "Migration Workspace", href: "/existing-isp", permission: "existingisp_read" },
         ],
       },
       {
-        title: "SMS Campaign",
+        title: "SMS Campaigns",
         icon: MessageSquare,
         permission: "services_manage",
         href: "/sms-campaign",
@@ -235,45 +237,38 @@ const menuCategories: MenuCategory[] = [
     category: "Network Infrastructure",
     items: [
       {
-        title: "TR-069 ACS",
-        icon: Cpu,
-        permission: "olt_read",
-        submenu: [
-          { title: "TR-069 Management", href: "/tr069", permission: "olt_read" },
-        ],
-      },
-      {
-        title: "NAS Management",
+        title: "NAS",
         icon: Server,
         permission: "nas_read",
         submenu: [
-          { title: "NAS Servers", href: "/nas", permission: "nas_read" },
-          { title: "Add NAS", href: "/nas/new", permission: "nas_create" },
+          { title: "NAS Directory", href: "/nas", permission: "nas_read" },
+          { title: "Register NAS", href: "/nas/new", permission: "nas_create" },
         ],
       },
       {
-        title: "Device Management",
+        title: "Devices",
         icon: Router,
         permission: ["devices_view", "olt_read", "nas_read"],
         submenu: [
+          { title: "Device Inventory", href: "/device-management/all", permission: ["devices_view", "olt_read", "nas_read"] },
           { title: "MikroTik Management", href: "/device-management/mikrotik", permission: ["devices_view", "olt_read", "nas_read"] },
-          { title: "Cisco Management", href: "/device-management/cisco", permission: ["devices_view", "olt_read", "nas_read"] },
-          { title: "Huawei OLT Management", href: "/device-management/huawei-olt", permission: ["devices_view", "olt_read", "nas_read"] },
+          { title: "Cisco Network Devices", href: "/device-management/cisco", permission: ["devices_view", "olt_read", "nas_read"] },
+          { title: "Huawei OLTs", href: "/device-management/huawei-olt", permission: ["devices_view", "olt_read", "nas_read"] },
           { title: "Nokia BNG", href: "/device-management/nokia-bng", permission: ["devices_view", "olt_read", "nas_read"] },
-          { title: "BD Com", href: "/device-management/bdcom", permission: ["devices_view", "olt_read", "nas_read"] },
-          { title: "CDATA", href: "/device-management/cdata", permission: ["devices_view", "olt_read", "nas_read"] },
+          { title: "BDCOM OLTs", href: "/device-management/bdcom", permission: ["devices_view", "olt_read", "nas_read"] },
+          { title: "C-DATA OLTs", href: "/device-management/cdata", permission: ["devices_view", "olt_read", "nas_read"] },
           { title: "VSOL", href: "/device-management/vsol", permission: ["devices_view", "olt_read", "nas_read"] },
-          { title: "NOKIA OLT", href: "/device-management/nokia-olt", permission: ["devices_view", "olt_read", "nas_read"] },
+          { title: "Nokia OLTs", href: "/device-management/nokia-olt", permission: ["devices_view", "olt_read", "nas_read"] },
           { title: "FortiGate Firewall", href: "/device-management/fortiget-firewall", permission: ["devices_view", "olt_read", "nas_read"] },
-          { title: "Alto Palo", href: "/device-management/alto-palo", permission: ["devices_view", "olt_read", "nas_read"] },
-          { title: "Sophos", href: "/device-management/sophos", permission: ["devices_view", "olt_read", "nas_read"] },
-          { title: "Linux Server", href: "/device-management/linux-server", permission: ["devices_view", "olt_read", "nas_read"] },
-          { title: "Juniper Switch", href: "/device-management/juniper-switch", permission: ["devices_view", "olt_read", "nas_read"] },
+          { title: "Palo Alto Networks", href: "/device-management/alto-palo", permission: ["devices_view", "olt_read", "nas_read"] },
+          { title: "Sophos Firewalls", href: "/device-management/sophos", permission: ["devices_view", "olt_read", "nas_read"] },
+          { title: "Linux Servers", href: "/device-management/linux-server", permission: ["devices_view", "olt_read", "nas_read"] },
+          { title: "Juniper Switches", href: "/device-management/juniper-switch", permission: ["devices_view", "olt_read", "nas_read"] },
           { title: "Juniper BRAS", href: "/device-management/juniper-bras", permission: ["devices_view", "olt_read", "nas_read"] },
         ],
       },
       {
-        title: "Disconnect Sessions",
+        title: "Session Control",
         icon: Server,
         href: "/radius/disconnect",
         permission: "radius_disconnect",
@@ -284,17 +279,17 @@ const menuCategories: MenuCategory[] = [
     category: "Access Networks",
     items: [
       {
-        title: "Network Operations",
+        title: "Network Ops",
         icon: Activity,
         permission: ["dashboard_view", "devices_view", "olt_read"],
         submenu: [
-          { title: "Monitoring Dashboard", href: "/monitoring/dashboard", permission: ["dashboard_view", "devices_view", "olt_read"] },
-          { title: "Technical NOC", href: "/noc/dashboard", permission: ["dashboard_view", "devices_view", "olt_read"] },
+          { title: "Network Monitoring", href: "/monitoring/dashboard", permission: ["dashboard_view", "devices_view", "olt_read"] },
+          { title: "NOC Dashboard", href: "/noc/dashboard", permission: ["dashboard_view", "devices_view", "olt_read"] },
           { title: "ONU / ONT Inventory", href: "/network/onts", permission: "olt_read" },
         ],
       },
       {
-        title: "Fiber Management",
+        title: "Fiber",
         icon: Cable,
         permission: "olt_read",
         submenu: [
@@ -306,16 +301,30 @@ const menuCategories: MenuCategory[] = [
         ],
       },
       {
-        title: "Inventory Management",
+        title: "Inventory",
         icon: Package,
         permission: "inventory_read",
         submenu: [
-          { title: "Assign Inventory", href: "/inventory", permission: "inventory_manage" },
-          { title: "Add Inventory", href: "/inventory/add", permission: "inventory_manage" },
+          { title: "Inventory Assignments", href: "/inventory", permission: "inventory_manage" },
+          { title: "Add Stock Item", href: "/inventory/add", permission: "inventory_manage" },
           { title: "Bulk Inventory", href: "/inventory/bulk", permission: "bulk_inventory_read" },
           { title: "Import Inventory", href: "/inventory/import", permission: "inventory_manage" },
           { title: "Device Lifecycle", href: "/inventory/lifecycle", permission: "inventory_read" },
-          { title: "Vendor", href: "/vendors", permission: "settings_read" },
+          { title: "Vendors", href: "/vendors", permission: "settings_read" },
+        ],
+      },
+      {
+        title: "TR-069 ACS",
+        icon: Router,
+        permission: ["devices_view", "olt_read", "dashboard_view"],
+        submenu: [
+          { title: "ACS Dashboard", href: "/tr069", permission: ["devices_view", "olt_read", "dashboard_view"] },
+          { title: "Presets & Profiles", href: "/tr069/presets", permission: ["devices_view", "olt_read", "dashboard_view"] },
+          { title: "Provisions", href: "/tr069/provisions", permission: ["devices_view", "olt_read", "dashboard_view"] },
+          { title: "Firmware Files", href: "/tr069/files", permission: ["devices_view", "olt_read", "dashboard_view"] },
+          { title: "Virtual Parameters", href: "/tr069/virtual-parameters", permission: ["devices_view", "olt_read", "dashboard_view"] },
+          { title: "ACS Configuration", href: "/tr069/config", permission: ["devices_view", "olt_read", "dashboard_view"] },
+          { title: "ACS Users", href: "/tr069/users", permission: ["devices_view", "olt_read", "dashboard_view"] },
         ],
       },
       {
@@ -333,17 +342,17 @@ const menuCategories: MenuCategory[] = [
     category: "Services",
     items: [
       {
-        title: "3rd Party Services",
+        title: "Integrations / 3rd Party Services",
         icon: ListChecks,
         permission: "services_read",
         submenu: [
           { title: "Service Catalog", href: "/services", permission: "services_read" },
           { title: "Service Settings", href: "/services/settings", permission: "services_manage" },
-          { title: "Add Service", href: "/services/add", permission: "services_manage" },
+          { title: "Register Service", href: "/services/add", permission: "services_manage" },
           { title: "NetTV Service", href: "/nettv", permission: "services_read" },
           { title: "Tshul Accounting", href: "/tshul", permission: "services_read" },
           { title: "Nepurix Accounting", href: "/nepurix", permission: "services_read" },
-          { title: "Radius Service", href: "/radius", permission: "services_read" },
+          { title: "RADIUS Service", href: "/radius", permission: "services_read" },
           { title: "eSewa Transactions", href: "/services/esewa", permission: "services_read" },
           { title: "Aakash SMS Setup", href: "/services/aakashsms", permission: "services_read" },
           { title: "Yeastar PBX", href: "/yeaster", permission: "nav_yeastar" },
@@ -360,12 +369,20 @@ const menuCategories: MenuCategory[] = [
         icon: Receipt,
         permission: "billing_read",
         submenu: [
-          { title: "Invoices", href: "/finance/invoices", permission: "billing_read" },
+          { title: "Accounting Dashboard", href: "/accounting", permission: "billing_read" },
+          { title: "Prepaid Wallets", href: "/finance/wallet", permission: ["billing_read", "wallet_view"] },
+          { title: "Invoices", href: "/finance/invoices", permission: ["billing_read", "billing_read_self"] },
           { title: "Invoice Ranges", href: "/finance/invoice-ranges", permission: "billing_update" },
           { title: "Recharge", href: "/finance/recharge", permission: "billing_read_self" },
-          { title: "Renewal", href: "/finance/renew", permission: "billing_read_self" },
+          { title: "Renewals", href: "/finance/renew", permission: "billing_read_self" },
           { title: "Branch Requests", href: "/finance/requests", permission: "billing_read" },
         ],
+      },
+      {
+        title: "Resellers",
+        icon: Building2,
+        permission: "branch_read",
+        href: "/reseller",
       },
     ],
   },
@@ -373,12 +390,18 @@ const menuCategories: MenuCategory[] = [
     category: "Operations",
     items: [
       {
-        title: "Task Management",
+        title: "Tasks",
         icon: ListChecks,
         permission: "tasks_manage",
         submenu: [
           { title: "Tasks", href: "/tasks", permission: "tasks_manage" },
         ],
+      },
+      {
+        title: "Field Staff GPS",
+        icon: Navigation,
+        permission: "branch_read",
+        href: "/admin/field-staff",
       },
     ],
   },
@@ -390,8 +413,8 @@ const menuCategories: MenuCategory[] = [
         icon: HelpCircle,
         permission: "tickets_manage",
         submenu: [
-          { title: "Support Tickets", href: "/tickets", permission: "tickets_manage" },
-          { title: "Create Ticket", href: "/tickets/create", permission: "tickets_create" },
+          { title: "Ticket Queue", href: "/tickets", permission: "tickets_manage" },
+          { title: "Open Ticket", href: "/tickets/create", permission: "tickets_create" },
         ],
       },
     ],
@@ -404,8 +427,8 @@ const menuCategories: MenuCategory[] = [
         icon: Settings,
         permission: "settings_read",
         submenu: [
-          { title: "System Settings", href: "/master-settings", permission: "settings_read" },
-          { title: "Package Settings", href: "/dashboard/settings", permission: "settings_read" },
+          { title: "Master Settings", href: "/master-settings", permission: "settings_read" },
+          { title: "Package Configuration", href: "/dashboard/settings", permission: "settings_read" },
         ],
       },
       {
@@ -413,7 +436,7 @@ const menuCategories: MenuCategory[] = [
         icon: FileText,
         permission: "reports_read",
         submenu: [
-          { title: "Reports", href: "/reports", permission: "reports_read" },
+          { title: "Report Center", href: "/reports", permission: "reports_read" },
         ],
       },
       {
@@ -465,8 +488,8 @@ const getIconColorClass = (title: string): string => {
   const t = title.toLowerCase()
   if (t.includes("dashboard")) return "sidebar-icon-dashboard" // Blue
   if (t.includes("ai agent") || t.includes("automation")) return "sidebar-icon-ai" // Kashtrix AI magenta
-  if (t.includes("customer") || t.includes("user") || t.includes("role") || t.includes("branch") || t.includes("membership") || t.includes("department")) return "sidebar-icon-management" // Purple
-  if (t.includes("lead") || t.includes("crm") || t.includes("existing isp") || t.includes("sms campaign")) return "sidebar-icon-marketing" // Teal
+  if (t.includes("access control") || t.includes("customer") || t.includes("user") || t.includes("role") || t.includes("branch") || t.includes("membership") || t.includes("department")) return "sidebar-icon-management" // Purple
+  if (t.includes("lead") || t.includes("migration") || t.includes("sms campaign")) return "sidebar-icon-marketing" // Teal
   if (t.includes("service") || t.includes("tariff") || t.includes("3rd party")) return "sidebar-icon-services" // Green
   if (t.includes("finance") || t.includes("billing") || t.includes("invoice") || t.includes("recharge")) return "sidebar-icon-finance" // Orange
   if (t.includes("ticket") || t.includes("support")) return "sidebar-icon-support" // Red
@@ -494,13 +517,6 @@ export function Sidebar({ open, setOpen }: SidebarProps) {
   const { user, hasPermission } = useAuth()
 
   const filteredMenuCategories = useMemo(() => {
-    const canAccess = (permission?: string | string[]) => {
-      if (!permission) return true
-      return Array.isArray(permission)
-        ? permission.some(item => hasPermission(item))
-        : hasPermission(permission)
-    }
-
     const roleName = typeof user?.role === 'string' ? user.role : (user?.role?.name || '');
     const roleClean = roleName.toLowerCase();
     const isGlobal = roleClean === 'administrator' ||
@@ -508,7 +524,16 @@ export function Sidebar({ open, setOpen }: SidebarProps) {
       roleClean === 'isp_admin' ||
       roleClean === 'isp admin' ||
       roleClean === 'super admin' ||
-      roleClean.startsWith('global');
+      roleClean.startsWith('global') ||
+      !roleClean;
+
+    const canAccess = (permission?: string | string[]) => {
+      if (isGlobal) return true;
+      if (!permission) return true;
+      return Array.isArray(permission)
+        ? permission.some(item => hasPermission(item))
+        : hasPermission(permission);
+    };
 
     const isCustomer = roleClean === 'customer';
     const isFieldStaff = roleClean.includes('field staff');
@@ -528,12 +553,12 @@ export function Sidebar({ open, setOpen }: SidebarProps) {
             ...category,
             items: category.items
               .filter(item =>
-                item.title !== "Lead Management (CRM)" &&
-                item.title !== "NAS Management" &&
+                item.title !== "Leads" &&
+                item.title !== "NAS" &&
                 item.title !== "Communications" &&
                 item.title !== "Settings"
               )
-              .map(item => category.category === "Access Networks" && item.title === "Inventory Management"
+              .map(item => category.category === "Access Networks" && item.title === "Inventory"
                 ? { ...item, permission: "inventory_assigned", submenu: [{ title: "My Assigned Items", href: "/inventory/assigned", permission: "inventory_assigned" }] }
                 : item)
           }))
@@ -542,7 +567,7 @@ export function Sidebar({ open, setOpen }: SidebarProps) {
     return roleMenuCategories.map(category => ({
       ...category,
       items: (category.category === "Customer Portal" && !isCustomer ? [] : category.items).map(item => {
-        if (item.title === "Inventory Management" && !canSeeInventory) return null
+        if (item.title === "Inventory" && !canSeeInventory) return null
         if (item.submenu) {
           const filteredSubmenu = item.submenu.filter(sub => {
             const isCustomerView = sub.href.startsWith("/customer/")
@@ -657,6 +682,25 @@ export function Sidebar({ open, setOpen }: SidebarProps) {
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [open, setOpen])
 
+  const isSubitemActive = (
+    subitem: { href: string },
+    parentSubmenu: { href: string }[] | undefined,
+    currentPath: string
+  ): boolean => {
+    if (!subitem.href) return false
+    if (currentPath === subitem.href) return true
+    if (subitem.href !== "/ai-agents" && subitem.href !== "/" && currentPath.startsWith(subitem.href + "/")) {
+      const hasMoreSpecificSibling = parentSubmenu?.some(
+        (other) =>
+          other.href !== subitem.href &&
+          (currentPath === other.href || currentPath.startsWith(other.href + "/")) &&
+          other.href.length > subitem.href.length
+      )
+      return !hasMoreSpecificSibling
+    }
+    return false
+  }
+
   // Set open submenu based on current path
   useEffect(() => {
     let foundMenuItem: MenuItem | undefined
@@ -664,7 +708,7 @@ export function Sidebar({ open, setOpen }: SidebarProps) {
     if (filteredMenuCategories) {
       filteredMenuCategories.forEach((category) => {
         const item = category.items.find(
-          (item) => item.submenu?.some((subitem) => pathname === subitem.href || (subitem.href !== "/ai-agents" && pathname.startsWith(subitem.href + "/"))) || pathname === item.href || (item.title === "AI Agents" && pathname.startsWith("/ai-agents")),
+          (item) => item.submenu?.some((subitem) => isSubitemActive(subitem, item.submenu, pathname)) || pathname === item.href || (item.title === "AI Agents" && pathname.startsWith("/ai-agents")),
         )
         if (item) foundMenuItem = item
       })
@@ -739,7 +783,7 @@ export function Sidebar({ open, setOpen }: SidebarProps) {
 
     // For items with submenu, check if any submenu item matches the current path
     if (item.submenu) {
-      return item.submenu.some((subitem) => pathname === subitem.href || (subitem.href !== "/ai-agents" && pathname.startsWith(subitem.href + "/"))) || (item.title === "AI Agents" && pathname.startsWith("/ai-agents"))
+      return item.submenu.some((subitem) => isSubitemActive(subitem, item.submenu, pathname)) || (item.title === "AI Agents" && pathname.startsWith("/ai-agents"))
     }
 
     // For regular items, check if the path starts with the item's href
@@ -752,17 +796,17 @@ export function Sidebar({ open, setOpen }: SidebarProps) {
       <div
         ref={sidebarRef}
         className={cn(
-          "kashtrix-sidebar fixed inset-y-0 left-0 z-50 flex w-[260px] flex-col border-r border-[hsl(var(--sidebar-border))] bg-[hsl(var(--sidebar-background))] text-[hsl(var(--sidebar-foreground))] transition-[width,transform] duration-200 ease-out",
+          "kashtrix-sidebar fixed inset-y-0 left-0 z-50 flex w-[286px] flex-col border-r border-[hsl(var(--sidebar-border))] bg-[hsl(var(--sidebar-background))] text-[hsl(var(--sidebar-foreground))] transition-[width,transform] duration-200 ease-out",
           open ? "translate-x-0" : "-translate-x-full",
           "md:relative md:z-0 md:translate-x-0",
-          !open && window.innerWidth >= 768 ? "md:w-[60px]" : "md:w-[260px]",
+          !open ? "md:w-[68px]" : "md:w-[286px]",
         )}
       >
         <div className={cn("h-full flex flex-col", !open && "md:items-center")}>
           {/* Sidebar header */}
           <div
             className={cn(
-              "flex h-[58px] items-center border-b border-[hsl(var(--sidebar-border))] px-3",
+              "relative flex h-[76px] shrink-0 items-center border-b border-[hsl(var(--sidebar-border))] px-5",
               open ? "justify-start" : "md:justify-center",
             )}
           >
@@ -772,11 +816,11 @@ export function Sidebar({ open, setOpen }: SidebarProps) {
                 alt={brand}
                 className={cn(
                   "block object-contain",
-                  open ? "h-8 max-w-[156px]" : "h-8 w-8"
+                  open ? "h-8 max-w-[174px]" : "h-8 w-8"
                 )}
               />
             ) : open ? (
-              <BrandLogo variant="wide" priority className="h-7 max-w-[174px]" />
+              <BrandLogo variant="wide" priority className="h-8 max-w-[184px]" />
             ) : (
               <BrandLogo variant="icon" priority className="h-8 w-9" />
             )}
@@ -794,15 +838,15 @@ export function Sidebar({ open, setOpen }: SidebarProps) {
           </div>
 
           {/* Sidebar content */}
-          <div className={cn("flex-1 overflow-auto py-2 scrollbar-thin", open ? "px-2" : "px-0")}>
-            <nav className="grid gap-1" aria-label="Main navigation">
+          <div className={cn("flex-1 overflow-auto py-3 scrollbar-thin", open ? "px-2.5" : "px-0")}>
+            <nav className="grid" aria-label="Main navigation">
               {filteredMenuCategories &&
                 filteredMenuCategories.map((category, categoryIndex) => (
-                  <div key={category.category} className="mb-2">
+                  <div key={category.category} className="mb-2 last:mb-0">
                     {/* Category header - only show when sidebar is open */}
                     {open && (
-                      <div className="mb-1 px-3 pt-1">
-                        <h3 className="text-[11px] font-semibold tracking-wide text-foreground/80">
+                      <div className="mb-1 px-2.5 pt-1.5">
+                        <h3 className="sidebar-category text-[10px] font-semibold uppercase tracking-[0.12em]">
                           {category.category}
                         </h3>
                       </div>
@@ -861,7 +905,7 @@ export function Sidebar({ open, setOpen }: SidebarProps) {
                                 <button
                                   onClick={() => toggleMenu(item.title)}
                                   className={cn(
-                                    "flex h-9 w-full items-center justify-between rounded-lg px-2.5 text-left text-[13px] font-medium transition-colors",
+                                    "flex h-9 w-full items-center justify-between rounded-lg px-2.5 text-left text-[13px] font-medium transition-all",
                                     isActive
                                       ? "bg-primary/10 text-primary"
                                       : "text-adaptive hover:bg-muted hover:text-foreground",
@@ -885,16 +929,16 @@ export function Sidebar({ open, setOpen }: SidebarProps) {
                               )}
                             </div>
                             {open && isOpen && (
-                              <div className="pl-10 pr-2">
-                                <div className="mt-1 space-y-1">
+                              <div className="ml-[1.35rem] border-l border-[hsl(var(--sidebar-border))] pl-4 pr-2">
+                                <div className="mt-1 space-y-0.5 py-1">
                                   {item.submenu?.map((subitem) => {
-                                    const isSubActive = pathname === subitem.href || (subitem.href !== "/ai-agents" && pathname.startsWith(subitem.href + "/"))
+                                    const isSubActive = isSubitemActive(subitem, item.submenu, pathname)
                                     return (
                                       <Link
                                         key={subitem.title}
                                         href={subitem.href}
                                         className={cn(
-                                          "flex min-h-8 items-center justify-start rounded-lg px-2.5 py-1 text-left text-xs transition-colors submenu-item",
+                                          "flex min-h-7 items-center justify-start rounded-md px-2 py-1 text-left text-[12px] transition-colors submenu-item",
                                           isSubActive
                                             ? "bg-primary/10 text-primary"
                                             : "text-adaptive hover:bg-muted hover:text-foreground",
@@ -952,7 +996,7 @@ export function Sidebar({ open, setOpen }: SidebarProps) {
                           key={item.title}
                           href={item.href!}
                           className={cn(
-                            "flex items-center justify-start gap-3 rounded-md px-3 py-2 text-left text-sm font-medium transition-colors",
+                            "flex h-9 items-center justify-start gap-2.5 rounded-lg px-2.5 text-left text-[13px] font-medium transition-colors",
                             isActive
                               ? "bg-primary/10 text-primary"
                               : "text-adaptive hover:bg-muted hover:text-foreground",
@@ -980,9 +1024,9 @@ export function Sidebar({ open, setOpen }: SidebarProps) {
 
           {/* Sidebar footer */}
           <div
-            className={cn("border-t border-border/40 p-4", !open && "md:hidden", "hidden md:block")}
+            className={cn("m-3 rounded-xl border border-[hsl(var(--sidebar-border))] bg-background/55 p-3 shadow-sm", !open && "md:hidden", "hidden md:block")}
             style={{
-              borderTop: isDarkMode ? "1px solid rgba(255, 255, 255, 0.05)" : "1px solid rgba(255, 255, 255, 0.3)",
+              borderColor: isDarkMode ? "rgba(255, 255, 255, 0.08)" : "rgba(15, 23, 42, 0.08)",
             }}
           >
             <p className="text-xs text-muted-foreground">Kashtrix · Every System. One Platform.</p>
@@ -1023,14 +1067,14 @@ export function Sidebar({ open, setOpen }: SidebarProps) {
 
           {/* Divider */}
           <div className="h-px bg-border/40 mx-2 my-1"></div>
-
           {/* Submenu items */}
           <div className="py-1">
-            {filteredMenuCategories
-              .flatMap((category) => category.items)
-              .find((item) => item && item.title === hoveredMenu)
-              ?.submenu?.map((subitem) => {
-                const isSubActive = pathname === subitem.href || (subitem.href !== "/ai-agents" && pathname.startsWith(subitem.href + "/"))
+            {(() => {
+              const activeParent = filteredMenuCategories
+                .flatMap((category) => category.items)
+                .find((item) => item && item.title === hoveredMenu);
+              return activeParent?.submenu?.map((subitem) => {
+                const isSubActive = isSubitemActive(subitem, activeParent.submenu, pathname);
                 return (
                   <Link
                     key={subitem.title}
@@ -1044,8 +1088,9 @@ export function Sidebar({ open, setOpen }: SidebarProps) {
                     <span className="submenu-bullet"></span>
                     {subitem.title}
                   </Link>
-                )
-              })}
+                );
+              });
+            })()}
           </div>
         </div>
       )}

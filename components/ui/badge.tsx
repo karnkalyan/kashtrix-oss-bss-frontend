@@ -4,7 +4,7 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 const badgeVariants = cva(
-  "inline-flex min-h-5 items-center rounded-full border px-2 py-0.5 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+  "inline-flex min-h-5 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold leading-none transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 [&_svg]:size-3 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
@@ -17,8 +17,16 @@ const badgeVariants = cva(
         warning:
           "border-transparent bg-[var(--status-warning-bg)] text-[var(--status-warning)]",
         info: "border-transparent bg-[var(--status-info-bg)] text-[var(--status-info)]",
+        critical:
+          "border-transparent bg-[var(--status-critical-bg)] text-[var(--status-critical)]",
+        major:
+          "border-transparent bg-[var(--status-major-bg)] text-[var(--status-major)]",
+        maintenance:
+          "border-transparent bg-[var(--status-maintenance-bg)] text-[var(--status-maintenance)]",
+        neutral:
+          "border-transparent bg-[var(--status-neutral-bg)] text-[var(--status-neutral)]",
         ai: "border-transparent bg-[var(--status-info-bg)] text-[var(--status-info)]",
-        outline: "text-foreground",
+        outline: "border-border bg-card text-foreground",
       },
     },
     defaultVariants: {
@@ -31,8 +39,13 @@ export interface BadgeProps extends React.HTMLAttributes<HTMLDivElement>, Varian
   indicatorClassName?: string
 }
 
-function Badge({ className, variant, indicatorClassName, ...props }: BadgeProps) {
-  return <div className={cn(badgeVariants({ variant }), className)} {...props} />
+function Badge({ className, variant, indicatorClassName, children, ...props }: BadgeProps) {
+  return (
+    <div data-ui="badge" className={cn(badgeVariants({ variant }), className)} {...props}>
+      {indicatorClassName && <span aria-hidden="true" className={cn("size-1.5 rounded-full bg-current", indicatorClassName)} />}
+      {children}
+    </div>
+  )
 }
 
 export { Badge, badgeVariants }

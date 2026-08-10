@@ -11,12 +11,12 @@ export function FilterContainer({ children, className }: FilterContainerProps) {
   return (
     <Card
       className={cn(
-        "border-border bg-card p-4 shadow-sm",
+        "border-border bg-card p-3 shadow-sm",
         "transition-colors duration-200",
         className,
       )}
     >
-      <div className="flex flex-wrap gap-4 items-center">{children}</div>
+      <div className="flex flex-wrap items-center gap-3">{children}</div>
     </Card>
   )
 }

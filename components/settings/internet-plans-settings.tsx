@@ -46,6 +46,7 @@ export type InternetPlan = {
   maxDiscountCount: number
   highPriority: boolean
   branchIds: number[]
+  resellerIds: number[]
 }
 
 export type ISPType = {
@@ -59,6 +60,12 @@ export type ISPType = {
 }
 
 type BranchItem = {
+  id: number
+  name: string
+  code: string
+}
+
+type ResellerItem = {
   id: number
   name: string
   code: string
@@ -113,12 +120,14 @@ const DEFAULT_PLAN: Omit<InternetPlan, "id"> = {
   maxDiscountCount: 0,
   highPriority: false,
   branchIds: [],
+  resellerIds: [],
 }
 
 export function InternetPlansSettings() {
   const [ispTypes, setIspTypes] = useState<ISPType[]>([])
   const [internetPlans, setInternetPlans] = useState<InternetPlan[]>([])
   const [branches, setBranches] = useState<BranchItem[]>([])
+  const [resellers, setResellers] = useState<ResellerItem[]>([])
   const [radiusPools, setRadiusPools] = useState<RadiusPool[]>([])
   const [ispInfo, setIspInfo] = useState<{ id: number; companyName: string } | null>(null)
   const [isAdding, setIsAdding] = useState(false)
@@ -163,6 +172,18 @@ export function InternetPlansSettings() {
       }
     }
     loadBranches()
+  }, [])
+
+  useEffect(() => {
+    async function loadResellers() {
+      try {
+        const response = await apiRequest<{ success: boolean; data: ResellerItem[] }>("/resellers?limit=100")
+        setResellers(Array.isArray(response?.data) ? response.data : [])
+      } catch {
+        setResellers([])
+      }
+    }
+    loadResellers()
   }, [])
 
   // Load ISP info
@@ -236,6 +257,7 @@ export function InternetPlansSettings() {
         maxDiscountCount: Number(r.maxDiscountCount ?? 0),
         highPriority: Boolean(r.highPriority),
         branchIds: Array.isArray(r.branches) ? r.branches.map((b: any) => b.branchId || b.branch?.id) : [],
+        resellerIds: Array.isArray(r.resellers) ? r.resellers.map((item: any) => item.resellerId || item.reseller?.id) : [],
       }))
       setInternetPlans(mapped)
     } catch (err) {
@@ -290,6 +312,7 @@ export function InternetPlansSettings() {
     maxDiscountCount: newPlan.maxDiscountCount,
     highPriority: newPlan.highPriority,
     branchIds: newPlan.branchIds,
+    resellerIds: newPlan.resellerIds,
   })
 
   const handleAdd = async () => {
@@ -396,6 +419,13 @@ export function InternetPlansSettings() {
       ? newPlan.branchIds.filter((id) => id !== branchId)
       : [...newPlan.branchIds, branchId]
     setNewPlan({ ...newPlan, branchIds: updated })
+  }
+
+  const toggleReseller = (resellerId: number) => {
+    const updated = newPlan.resellerIds.includes(resellerId)
+      ? newPlan.resellerIds.filter((id) => id !== resellerId)
+      : [...newPlan.resellerIds, resellerId]
+    setNewPlan({ ...newPlan, resellerIds: updated })
   }
 
   // Custom Radius Attributes
@@ -693,6 +723,18 @@ export function InternetPlansSettings() {
                     />
                     <span>{branch.name}</span>
                     <span className="text-xs text-muted-foreground">({branch.code})</span>
+                  </label>
+                ))}
+                {resellers.map((reseller) => (
+                  <label key={`reseller-${reseller.id}`} className="flex items-center gap-2 cursor-pointer text-sm bg-background px-3 py-1.5 rounded-md border hover:bg-accent transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={newPlan.resellerIds.includes(reseller.id)}
+                      onChange={() => toggleReseller(reseller.id)}
+                      className="rounded border-gray-300"
+                    />
+                    <span>{reseller.name}</span>
+                    <span className="text-xs text-muted-foreground">({reseller.code}, Reseller)</span>
                   </label>
                 ))}
                 {branches.length === 0 && !ispInfo && (
@@ -1005,8 +1047,11 @@ export function InternetPlansSettings() {
                     <TableCell>{formatDataLimit(plan.dataLimit)}</TableCell>
                     <TableCell>
                       <span className="text-xs text-muted-foreground">
-                        {plan.branchIds.length > 0
-                          ? plan.branchIds.map(bid => branches.find(b => b.id === bid)?.name || bid).join(", ")
+                        {plan.branchIds.length > 0 || plan.resellerIds.length > 0
+                          ? [
+                              ...plan.branchIds.map(bid => branches.find(b => b.id === bid)?.name || bid),
+                              ...plan.resellerIds.map(rid => `${resellers.find(r => r.id === rid)?.name || rid} (Reseller)`)
+                            ].join(", ")
                           : "All"
                         }
                       </span>

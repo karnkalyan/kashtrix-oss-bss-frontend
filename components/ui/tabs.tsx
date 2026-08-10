@@ -13,8 +13,9 @@ const TabsList = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <TabsPrimitive.List
     ref={ref}
+    data-ui="tabs-list"
     className={cn(
-      "inline-flex h-10 items-center justify-center gap-1 border-b bg-transparent text-muted-foreground",
+      "inline-flex h-10 max-w-full items-center justify-start gap-1 overflow-x-auto border-b bg-transparent text-muted-foreground",
       className
     )}
     {...props}
@@ -28,8 +29,9 @@ const TabsTrigger = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <TabsPrimitive.Trigger
     ref={ref}
+    data-ui="tabs-trigger"
     className={cn(
-      "relative inline-flex h-10 items-center justify-center whitespace-nowrap px-3 text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:scale-x-0 after:bg-[#4A1B7A] after:transition-transform data-[state=active]:text-primary data-[state=active]:after:scale-x-100",
+      "relative inline-flex h-10 shrink-0 items-center justify-center whitespace-nowrap px-3 text-xs font-semibold ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:scale-x-0 after:bg-primary after:transition-transform data-[state=active]:text-primary data-[state=active]:after:scale-x-100",
       className
     )}
     {...props}
@@ -43,6 +45,7 @@ const TabsContent = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <TabsPrimitive.Content
     ref={ref}
+    data-ui="tabs-content"
     className={cn(
       "mt-2 ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
       className

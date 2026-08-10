@@ -1,19 +1,19 @@
 import { apiRequest } from "@/lib/api"
 
 export const DEVICE_TYPES = {
-  mikrotik:{label:"MikroTik Management",vendor:"MikroTik",defaultMethod:"web_api"},
-  cisco:{label:"Cisco Management",vendor:"Cisco",defaultMethod:"ssh"},
-  "huawei-olt":{label:"Huawei OLT Management",vendor:"Huawei",defaultMethod:"ssh"},
+  mikrotik:{label:"MikroTik RouterOS",vendor:"MikroTik",defaultMethod:"web_api"},
+  cisco:{label:"Cisco IOS",vendor:"Cisco",defaultMethod:"ssh"},
+  "huawei-olt":{label:"Huawei OLT",vendor:"Huawei",defaultMethod:"ssh"},
   "nokia-bng":{label:"Nokia BNG",vendor:"Nokia",defaultMethod:"ssh"},
-  bdcom:{label:"BD Com",vendor:"BDCOM",defaultMethod:"telnet"},
-  cdata:{label:"CDATA",vendor:"CDATA",defaultMethod:"telnet"},
-  vsol:{label:"VSOL",vendor:"VSOL",defaultMethod:"web_api"},
-  "nokia-olt":{label:"NOKIA OLT",vendor:"Nokia",defaultMethod:"ssh"},
-  "fortiget-firewall":{label:"FortiGate Firewall",vendor:"Fortinet",defaultMethod:"web_api"},
-  "alto-palo":{label:"Alto Palo",vendor:"Palo Alto",defaultMethod:"web_api"},
-  sophos:{label:"Sophos",vendor:"Sophos",defaultMethod:"web_api"},
+  bdcom:{label:"BDCOM OLT",vendor:"BDCOM",defaultMethod:"telnet"},
+  cdata:{label:"C-Data OLT",vendor:"CDATA",defaultMethod:"telnet"},
+  vsol:{label:"VSOL OLT",vendor:"VSOL",defaultMethod:"web_api"},
+  "nokia-olt":{label:"Nokia OLT",vendor:"Nokia",defaultMethod:"ssh"},
+  "fortiget-firewall":{label:"Fortinet FortiGate",vendor:"Fortinet",defaultMethod:"web_api"},
+  "alto-palo":{label:"Palo Alto Networks",vendor:"Palo Alto",defaultMethod:"web_api"},
+  sophos:{label:"Sophos Firewall",vendor:"Sophos",defaultMethod:"web_api"},
   "linux-server":{label:"Linux Server",vendor:"Linux",defaultMethod:"ssh"},
-  "juniper-switch":{label:"Juniper Switch",vendor:"Juniper",defaultMethod:"ssh"},
+  "juniper-switch":{label:"Juniper EX/QFX Switch",vendor:"Juniper",defaultMethod:"ssh"},
   "juniper-bras":{label:"Juniper BRAS",vendor:"Juniper",defaultMethod:"ssh"},
 } as const
 export type DeviceType=keyof typeof DEVICE_TYPES
@@ -27,7 +27,7 @@ export interface DevicePayload extends Partial<ManagedDevice>{name:string;device
 export interface DeviceListResult{items:ManagedDevice[];pagination:{page:number;limit:number;total:number;pages:number}}
 export const deviceApi={
  list:(params:Record<string,string|number|boolean|undefined>)=>apiRequest<{success:boolean;data:DeviceListResult}>(`/devices?${new URLSearchParams(Object.entries(params).filter(([,v])=>v!==undefined).map(([k,v])=>[k,String(v)])).toString()}`),
- get:(id:number)=>apiRequest<{success:boolean;data:ManagedDevice}>(`/devices/${id}`),
+ get:(id:number,options?:Parameters<typeof apiRequest>[1])=>apiRequest<{success:boolean;data:ManagedDevice}>(`/devices/${id}`,options),
  create:(payload:DevicePayload)=>apiRequest<{success:boolean;data:ManagedDevice}>("/devices",{method:"POST",body:JSON.stringify(payload)}),
  update:(id:number,payload:Partial<DevicePayload>)=>apiRequest<{success:boolean;data:ManagedDevice}>(`/devices/${id}`,{method:"PATCH",body:JSON.stringify(payload)}),
  remove:(id:number)=>apiRequest(`/devices/${id}`,{method:"DELETE"}),

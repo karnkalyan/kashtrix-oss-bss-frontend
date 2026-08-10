@@ -26,10 +26,10 @@ const config = {
       },
       colors: {
         kashtrix: {
-          plum: "#173F49",
-          purple: "#6CC7D9",
-          soft: "#DCEFF3",
-          magenta: "#6FA8FF",
+          plum: "#2b0d3a",
+          purple: "#4a1b7a",
+          soft: "#e8dff0",
+          magenta: "#e11d72",
         },
         border: "hsl(var(--border))",
         "border-strong": "hsl(var(--border-strong))",

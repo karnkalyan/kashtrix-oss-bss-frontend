@@ -130,9 +130,10 @@ export function SearchableSelect({
           variant="outline"
           role="combobox"
           aria-expanded={open}
+          aria-invalid={error || undefined}
           className={cn(
-            "w-full min-h-10 flex items-center justify-start flex-wrap gap-1 rounded-[10px] px-3 py-2 !h-auto",
-            error && "border-red-500 focus-visible:ring-red-500",
+            "min-h-9 w-full flex-wrap justify-start gap-1 rounded-lg px-3 py-1.5 !h-auto",
+            error && "border-destructive focus-visible:ring-destructive/20",
             className
           )}
           disabled={disabled}
@@ -144,7 +145,7 @@ export function SearchableSelect({
                 {selectedOptions.map(opt => (
                   <span
                     key={opt.value}
-                    className="inline-flex items-center rounded bg-accent px-2 py-0.5 text-xs"
+                    className="inline-flex items-center rounded-md border border-primary/10 bg-primary/[0.055] px-2 py-0.5 text-[11px] font-medium"
                   >
                     {opt.label}
                     {clearable && (
@@ -163,7 +164,7 @@ export function SearchableSelect({
             <span className="truncate">{selectedOptions[0]?.label || placeholder}</span>
           )}
 
-          <div className="flex items-center ml-auto">
+          <div className="ml-auto flex items-center">
             {clearable && selectedOptions.length > 0 && (
               <X
                 className="mr-1 h-4 w-4 shrink-0 opacity-50 hover:opacity-100"
@@ -176,7 +177,7 @@ export function SearchableSelect({
         </Button>
       </PopoverTrigger>
 
-      <PopoverContent className="p-0 w-[--radix-popover-trigger-width]" align="start">
+      <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
         <Command shouldFilter={false}>
           <CommandInput
             placeholder={`Search ${placeholder.toLowerCase()}...`}
@@ -192,7 +193,7 @@ export function SearchableSelect({
                     key={option.value}
                     value={option.value}
                     onSelect={() => toggleOption(option)}
-                    className="flex items-center justify-between"
+                    className="flex min-h-9 items-center justify-between rounded-md text-xs"
                   >
                     <div className="flex items-center">
                       {showSelectedIcon && (

@@ -11,28 +11,57 @@ import { applyThemeTokens, type ThemeTokens } from "@/lib/theme-runtime";
 function ThemeSyncer() {
   const { resolvedTheme } = useTheme();
   const [tenantTokens, setTenantTokens] = useState<ThemeTokens | null>(null);
+  const cacheKey = "active-tenant-theme-tokens";
 
   useEffect(() => {
     let active = true;
     const load = async () => {
-      if (["/login", "/forgot-password", "/reset-password"].some(path => window.location.pathname.startsWith(path))) return;
       try {
         const base = getDynamicBaseUrl().replace(/\/+$/, "");
         const branch = localStorage.getItem("selected-branch-id");
         const response = await fetch(base + "/themes/active", { credentials: "include", headers: branch ? { "x-selected-branch-id": branch } : undefined });
         if (!response.ok) return;
         const payload = await response.json();
-        if (active && payload?.data?.tokens) setTenantTokens(payload.data.tokens);
+        if (active && payload?.data?.tokens) {
+          setTenantTokens(payload.data.tokens);
+          localStorage.setItem(cacheKey, JSON.stringify(payload.data.tokens));
+        }
       } catch {}
     };
+    try {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) setTenantTokens(JSON.parse(cached));
+    } catch {
+      localStorage.removeItem(cacheKey);
+    }
     load();
     const changed = (event: Event) => {
       const tokens = (event as CustomEvent).detail?.tokens;
-      if (tokens) setTenantTokens(tokens);
+      if (tokens) {
+        setTenantTokens(tokens);
+        localStorage.setItem(cacheKey, JSON.stringify(tokens));
+      }
       else load();
     };
+    const storageChanged = (event: StorageEvent) => {
+      if (event.key !== cacheKey) return;
+      if (!event.newValue) {
+        load();
+        return;
+      }
+      try {
+        setTenantTokens(JSON.parse(event.newValue));
+      } catch {
+        load();
+      }
+    };
     window.addEventListener("tenant-theme-changed", changed);
-    return () => { active = false; window.removeEventListener("tenant-theme-changed", changed); };
+    window.addEventListener("storage", storageChanged);
+    return () => {
+      active = false;
+      window.removeEventListener("tenant-theme-changed", changed);
+      window.removeEventListener("storage", storageChanged);
+    };
   }, []);
 
   useEffect(() => {

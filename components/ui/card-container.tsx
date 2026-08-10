@@ -1,7 +1,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { useTheme } from "next-themes"
 import type { ReactNode } from "react"
 import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 
 interface CardAction {
   label: string
@@ -26,8 +26,6 @@ export function CardContainer({
   title,
   description,
   children,
-  gradientColor,
-  forceDarkMode = false,
   className = "",
   contentClassName = "",
   action,
@@ -37,12 +35,12 @@ export function CardContainer({
 
   return (
     <Card
-      className={`overflow-hidden ${className}`}
+      className={cn("overflow-hidden", className)}
     >
       {hasHeader && (
-        <CardHeader className="border-b border-border bg-card p-5">
-          <div className="flex justify-between items-center">
-            <div>
+        <CardHeader className="border-b border-border p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
               {title && <CardTitle>{title}</CardTitle>}
               {description && (
                 <CardDescription>
@@ -68,7 +66,7 @@ export function CardContainer({
           </div>
         </CardHeader>
       )}
-      <CardContent className={`p-5 ${hasHeader ? "pt-5" : ""} ${contentClassName}`}>{children}</CardContent>
+      <CardContent className={cn("p-4", hasHeader && "pt-4", contentClassName)}>{children}</CardContent>
     </Card>
   )
 }

@@ -8,6 +8,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
     Upload,
     Download,
@@ -21,7 +23,7 @@ import {
     Package
 } from "lucide-react";
 import { ISPService } from "@/types/service.types";
-import { ServicesAPI } from "@/lib/api/services";
+import { ServicesAPI } from "@/lib/api/service";
 import { toast } from "react-hot-toast";
 
 interface BulkServiceOperationsProps {

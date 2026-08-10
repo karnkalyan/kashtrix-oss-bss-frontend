@@ -45,6 +45,7 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
       else localStorage.removeItem("selected-branch-id");
     }
     setSelectedBranchIdState(id);
+    window.dispatchEvent(new CustomEvent("tenant-theme-changed"));
 
     // Notify backend about the branch switch
     if (id) {

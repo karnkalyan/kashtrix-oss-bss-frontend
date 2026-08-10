@@ -44,6 +44,7 @@ export interface FiberNetworkDataset {
 export interface FiberMapFeature {
   type: "Point" | "Line"
   kind: "olt" | "splitter" | "ont" | "fiber"
+  subKind?: "mdb" | "fdb" | "backbone" | "distribution" | "drop"
   name: string
   coords?: [number, number]
   path?: [number, number][]
@@ -92,35 +93,67 @@ const coordinatesOf = (source: any): [number, number] | null => {
   return [latitude, longitude]
 }
 
+/** Create an L-shaped routed path between two points to simulate road-following fiber routes */
+const routedPath = (from: [number, number], to: [number, number]): [number, number][] => {
+  const latDiff = Math.abs(to[0] - from[0])
+  const lngDiff = Math.abs(to[1] - from[1])
+  // For very short or nearly straight segments, use direct line
+  if (latDiff < 0.0003 && lngDiff < 0.0003) return [from, to]
+  // Create an L-shaped path (go horizontal first, then vertical) to mimic road routing
+  if (latDiff > lngDiff) {
+    const mid: [number, number] = [from[0], to[1]]
+    return [from, mid, to]
+  }
+  const mid: [number, number] = [to[0], from[1]]
+  return [from, mid, to]
+}
+
 const buildMapFeatures = (olts: any[], splitters: any[], customers: any[]): FiberMapFeature[] => {
   const features: FiberMapFeature[] = []
   const oltPositions = new Map<number, [number, number]>()
   const splitterPositions = new Map<number, [number, number]>()
+  const masterSplitterIds = new Set<number>()
+
+  // Identify master splitters (those that have children referencing them)
+  splitters.forEach(splitter => {
+    if (splitter.masterSplitterId) {
+      const master = splitters.find(candidate => splitterKeyMatches(splitter, candidate))
+      if (master) masterSplitterIds.add(Number(master.id))
+    }
+  })
 
   olts.forEach(olt => {
     const coords = coordinatesOf(olt)
     if (!coords) return
     oltPositions.set(Number(olt.id), coords)
-    features.push({ type: "Point", kind: "olt", name: `OLT · ${olt.name || olt.ipAddress || olt.id}`, coords, status: normalizeStatus(olt.status), meta: { id: olt.id, ipAddress: olt.ipAddress, vendor: olt.vendor, model: olt.model } })
+    features.push({ type: "Point", kind: "olt", name: olt.name || olt.ipAddress || `OLT ${olt.id}`, coords, status: normalizeStatus(olt.status), meta: { id: olt.id, ipAddress: olt.ipAddress, vendor: olt.vendor, model: olt.model } })
   })
 
   splitters.forEach(splitter => {
     const coords = coordinatesOf(splitter)
     if (!coords) return
     splitterPositions.set(Number(splitter.id), coords)
-    features.push({ type: "Point", kind: "splitter", name: `Splitter · ${splitter.name || splitter.splitterId || splitter.id}`, coords, status: normalizeStatus(splitter.status), meta: { id: splitter.id, splitterId: splitter.splitterId, splitRatio: splitter.splitRatio, usedPorts: splitter.usedPorts, portCount: splitter.portCount } })
+    // A splitter is MDB if it connects directly to OLT (no masterSplitterId)
+    const isMdb = !splitter.masterSplitterId
+    const subKind = isMdb ? "mdb" as const : "fdb" as const
+    const label = isMdb ? "MDB" : "FDB"
+    features.push({ type: "Point", kind: "splitter", subKind, name: `${label} · ${splitter.name || splitter.splitterId || splitter.id}`, coords, status: normalizeStatus(splitter.status), meta: { id: splitter.id, splitterId: splitter.splitterId, splitRatio: splitter.splitRatio, usedPorts: splitter.usedPorts, portCount: splitter.portCount, isMdb } })
   })
 
+  // Fiber lines between nodes — classified by tier
   splitters.forEach(splitter => {
     const target = splitterPositions.get(Number(splitter.id))
     if (!target) return
     const master = splitters.find(candidate => splitterKeyMatches(splitter, candidate))
     const source = master ? splitterPositions.get(Number(master.id)) : oltPositions.get(Number(splitter.oltId || splitter.olt?.id))
     if (!source) return
+    // OLT → Splitter = backbone, MDB → FDB = distribution
+    const tier = master ? "distribution" as const : "backbone" as const
     const relation = master ? `${master.name || master.splitterId} → ${splitter.name || splitter.splitterId}` : `OLT → ${splitter.name || splitter.splitterId}`
-    features.push({ type: "Line", kind: "fiber", name: `Fiber · ${relation}`, path: [source, target], relation, meta: { coreColor: splitter.upstreamFiber?.coreColor, cableId: splitter.upstreamFiber?.cableId } })
+    features.push({ type: "Line", kind: "fiber", subKind: tier, name: `${tier === "backbone" ? "Backbone" : "Distribution"} · ${relation}`, path: routedPath(source, target), relation, meta: { splitterId: splitter.id, coreColor: splitter.upstreamFiber?.coreColor, cableId: splitter.upstreamFiber?.cableId } })
   })
 
+  // Customer ONT nodes and drop fibers
   customers.forEach(customer => {
     const ont = getCustomerOnt(customer)
     const coords = coordinatesOf(customer)
@@ -129,11 +162,11 @@ const buildMapFeatures = (olts: any[], splitters: any[], customers: any[]): Fibe
     const splitterId = toNumber(service?.splitterId || service?.splitter?.id || customer.splitterId)
     const oltId = toNumber(service?.oltId || service?.olt?.id || customer.oltId)
     const source = splitterId !== null ? splitterPositions.get(splitterId) : oltId !== null ? oltPositions.get(oltId) : null
-    const ontName = `ONT · ${getCustomerName(customer)} (${ont.serialNumber || ont.ponSerial || customer.customerUniqueId || customer.id})`
-    features.push({ type: "Point", kind: "ont", name: ontName, coords, status: normalizeStatus(ont.status || customer.status), meta: { customerId: customer.customerUniqueId, serialNumber: ont.serialNumber || ont.ponSerial, macAddress: ont.macAddress, oltPort: service?.oltPort, splitterPort: service?.splitterPort } })
+    const customerName = getCustomerName(customer)
+    features.push({ type: "Point", kind: "ont", name: customerName, coords, status: normalizeStatus(ont.status || customer.status), meta: { customerId: customer.customerUniqueId, serialNumber: ont.serialNumber || ont.ponSerial, macAddress: ont.macAddress, oltPort: service?.oltPort, splitterPort: service?.splitterPort } })
     if (source) {
-      const relation = splitterId !== null ? `Splitter → ${getCustomerName(customer)}` : `OLT → ${getCustomerName(customer)}`
-      features.push({ type: "Line", kind: "fiber", name: `Drop fiber · ${relation}`, path: [source, coords], relation, meta: { customerId: customer.customerUniqueId } })
+      const relation = splitterId !== null ? `FDB → ${customerName}` : `OLT → ${customerName}`
+      features.push({ type: "Line", kind: "fiber", subKind: "drop", name: `Drop · ${relation}`, path: routedPath(source, coords), relation, meta: { customerId: customer.customerUniqueId } })
     }
   })
 
@@ -181,9 +214,10 @@ const buildOntNode = (customer: any): FiberTreeNode => {
 }
 
 const splitterKeyMatches = (splitter: any, master: any) => {
+  if (!splitter.masterSplitterId) return false
   return (
-    String(splitter.masterSplitterId || "") === String(master.splitterId || "") ||
-    String(splitter.masterSplitterId || "") === String(master.id || "")
+    String(splitter.masterSplitterId) === String(master.splitterId || "") ||
+    String(splitter.masterSplitterId) === String(master.id || "")
   )
 }
 

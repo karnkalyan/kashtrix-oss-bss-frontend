@@ -176,7 +176,7 @@ export function LoginForm() {
     let redirectPath = "/dashboard/overview"
     if (roleName === 'customer') {
       redirectPath = "/customer/dashboard"
-    } else if (roleName === 'field staff') {
+    } else if (roleName.includes('field staff') || roleName.includes('field_staff')) {
       redirectPath = "/tasks"
     }
 

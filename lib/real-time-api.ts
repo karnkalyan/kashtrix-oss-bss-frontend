@@ -1,4 +1,4 @@
-import webSocketClient from "./websocket-client";
+import { getWebSocketClient } from "./websocket-client";
 
 // Real-time API for Yeastar operations
 export class RealTimeApi {
@@ -27,14 +27,18 @@ export class RealTimeApi {
         this.unsubscribeCallbacks = [];
     }
 
+    private get client() {
+        return getWebSocketClient();
+    }
+
     // Subscribe to ISP room
     private subscribeToIspRoom() {
-        webSocketClient.subscribe(`isp_${this.ispId}`);
+        this.client?.subscribe(`isp_${this.ispId}`);
     }
 
     // Subscribe to Yeastar channels
     private subscribeToYeastarChannels() {
-        webSocketClient.subscribe([
+        this.client?.subscribe([
             'yeastar_calls',
             'yeastar_extensions',
             'yeastar_trunks',
@@ -44,28 +48,31 @@ export class RealTimeApi {
 
     // Set up event handlers
     private setupEventHandlers() {
+        const c = this.client;
+        if (!c) return;
+
         // Call events
-        const unsubscribeCallStart = webSocketClient.on('yeastar.call.start', this.handleCallStart.bind(this));
-        const unsubscribeCallEnd = webSocketClient.on('yeastar.call.end', this.handleCallEnd.bind(this));
-        const unsubscribeCallUpdate = webSocketClient.on('yeastar.call.update', this.handleCallUpdate.bind(this));
+        const unsubscribeCallStart = c.on('yeastar.call.start', this.handleCallStart.bind(this));
+        const unsubscribeCallEnd = c.on('yeastar.call.end', this.handleCallEnd.bind(this));
+        const unsubscribeCallUpdate = c.on('yeastar.call.update', this.handleCallUpdate.bind(this));
 
         // Extension events
-        const unsubscribeExtensionAdded = webSocketClient.on('yeastar.extension.added', this.handleExtensionAdded.bind(this));
-        const unsubscribeExtensionUpdated = webSocketClient.on('yeastar.extension.updated', this.handleExtensionUpdated.bind(this));
-        const unsubscribeExtensionDeleted = webSocketClient.on('yeastar.extension.deleted', this.handleExtensionDeleted.bind(this));
+        const unsubscribeExtensionAdded = c.on('yeastar.extension.added', this.handleExtensionAdded.bind(this));
+        const unsubscribeExtensionUpdated = c.on('yeastar.extension.updated', this.handleExtensionUpdated.bind(this));
+        const unsubscribeExtensionDeleted = c.on('yeastar.extension.deleted', this.handleExtensionDeleted.bind(this));
 
         // Trunk events
-        const unsubscribeTrunkAdded = webSocketClient.on('yeastar.trunk.added', this.handleTrunkAdded.bind(this));
-        const unsubscribeTrunkUpdated = webSocketClient.on('yeastar.trunk.updated', this.handleTrunkUpdated.bind(this));
-        const unsubscribeTrunkDeleted = webSocketClient.on('yeastar.trunk.deleted', this.handleTrunkDeleted.bind(this));
+        const unsubscribeTrunkAdded = c.on('yeastar.trunk.added', this.handleTrunkAdded.bind(this));
+        const unsubscribeTrunkUpdated = c.on('yeastar.trunk.updated', this.handleTrunkUpdated.bind(this));
+        const unsubscribeTrunkDeleted = c.on('yeastar.trunk.deleted', this.handleTrunkDeleted.bind(this));
 
         // System events
-        const unsubscribeSystemUpdate = webSocketClient.on('yeastar.system.status.update', this.handleSystemUpdate.bind(this));
-        const unsubscribeListenerStarted = webSocketClient.on('yeastar.listener.started', this.handleListenerStarted.bind(this));
-        const unsubscribeListenerStopped = webSocketClient.on('yeastar.listener.stopped', this.handleListenerStopped.bind(this));
+        const unsubscribeSystemUpdate = c.on('yeastar.system.status.update', this.handleSystemUpdate.bind(this));
+        const unsubscribeListenerStarted = c.on('yeastar.listener.started', this.handleListenerStarted.bind(this));
+        const unsubscribeListenerStopped = c.on('yeastar.listener.stopped', this.handleListenerStopped.bind(this));
 
         // Data sync events
-        const unsubscribeDataSynced = webSocketClient.on('yeastar.data.synced', this.handleDataSynced.bind(this));
+        const unsubscribeDataSynced = c.on('yeastar.data.synced', this.handleDataSynced.bind(this));
 
         this.unsubscribeCallbacks.push(
             unsubscribeCallStart,
@@ -185,14 +192,14 @@ export class RealTimeApi {
 
     // Request extension refresh
     requestExtensionRefresh() {
-        webSocketClient.sendCommand('yeastar.extension.refresh', {
+        this.client?.sendCommand('yeastar.extension.refresh', {
             ispId: this.ispId
         });
     }
 
     // Request call hangup
     requestCallHangup(channelId: string, callId?: string) {
-        webSocketClient.sendCommand('yeastar.call.hangup', {
+        this.client?.sendCommand('yeastar.call.hangup', {
             ispId: this.ispId,
             channelId,
             callId
@@ -201,7 +208,7 @@ export class RealTimeApi {
 
     // Request call transfer
     requestCallTransfer(channelId: string, target: string) {
-        webSocketClient.sendCommand('yeastar.call.transfer', {
+        this.client?.sendCommand('yeastar.call.transfer', {
             ispId: this.ispId,
             channelId,
             target
@@ -210,11 +217,11 @@ export class RealTimeApi {
 
     // Get WebSocket state
     getWebSocketState() {
-        return webSocketClient.getState();
+        return this.client?.getState();
     }
 
     // Check if WebSocket is connected
     isConnected() {
-        return webSocketClient.isConnected();
+        return this.client?.isConnected() || false;
     }
 }

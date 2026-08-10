@@ -62,8 +62,8 @@ const defaultServiceTemplates = {
             timeout: 30000,
             retryAttempts: 3,
             demoCredentials: {
-                username: "demo@kisan.net.np",
-                password: "demo@kisan.net.np@123"
+                username: "",
+                password: ""
             }
         }, null, 2)
     },
@@ -77,10 +77,10 @@ const defaultServiceTemplates = {
         apiVersion: "v1",
         config: JSON.stringify({
             timeout: 10000,
-            secret: "Kisan@radius",
+            secret: "",
             defaultCredentials: {
-                username: "radius",
-                password: "Kisan@radius"
+                username: "",
+                password: ""
             }
         }, null, 2)
     },
@@ -92,9 +92,9 @@ const defaultServiceTemplates = {
             api_port: 80,
             version: "2.0.0",
             defaultCredentials: {
-                pbx_ip: "10.3.2.50",
-                username: "kisan",
-                password: "Kisan@123"
+                pbx_ip: "",
+                username: "",
+                password: ""
             }
         }, null, 2)
     },
@@ -106,15 +106,15 @@ const defaultServiceTemplates = {
             ari_port: 8088,
             ari_app_name: "kisan",
             defaultCredentials: {
-                ami_host: "10.3.2.51",
-                ami_port: "5038",
-                ami_username: "kisan_ami",
-                ami_password: "AmiPassword@123",
-                ari_host: "10.3.2.51",
-                ari_port: "8088",
-                ari_username: "kisan_ari",
-                ari_password: "AriPassword@123",
-                ari_app_name: "kisan"
+                ami_host: "",
+                ami_port: "",
+                ami_username: "",
+                ami_password: "",
+                ari_host: "",
+                ari_port: "",
+                ari_username: "",
+                ari_password: "",
+                ari_app_name: ""
             }
         }, null, 2)
     },
@@ -125,8 +125,8 @@ const defaultServiceTemplates = {
             timeout: 60000,
             retry: 3,
             defaultCredentials: {
-                api_key: "5c232ef1fdf138",
-                api_secret: "72b7b119b2b98983e1ad33a385b08df489",
+                api_key: "",
+                api_secret: "",
                 app_key: "",
                 app_secret: ""
             }

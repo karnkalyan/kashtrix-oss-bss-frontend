@@ -12,12 +12,13 @@ interface DataTableProps<T> {
   }[]
   className?: string
   emptyState?: React.ReactNode
+  rowKey?: (item: T, index: number) => React.Key
 }
 
-export function DataTable<T>({ data, columns, className, emptyState }: DataTableProps<T>) {
+export function DataTable<T>({ data, columns, className, emptyState, rowKey }: DataTableProps<T>) {
   return (
     <div className={cn("w-full", className)}>
-      <Table className="w-full border-collapse">
+      <Table className="w-full">
         <TableHeader>
           <TableRow className="hover:bg-transparent">
             {columns.map((column) => (
@@ -39,7 +40,7 @@ export function DataTable<T>({ data, columns, className, emptyState }: DataTable
             </TableRow>
           ) : (
             data.map((item, index) => (
-              <TableRow key={index}>
+              <TableRow key={rowKey ? rowKey(item, index) : index}>
                 {columns.map((column) => (
                   <TableCell key={`${index}-${column.key}`} className={cn("px-4 py-3 align-middle", column.className)}>
                     {column.cell(item)}

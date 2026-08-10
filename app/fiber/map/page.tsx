@@ -2,28 +2,16 @@
 
 import dynamic from "next/dynamic"
 import { DashboardLayout } from "@/components/layout/dashboard-layout"
-import { PageHeader } from "@/components/ui/page-header"
 
 const FiberMap = dynamic(() => import("@/components/fiber/fiber-map"), {
     ssr: false,
-    loading: () => <div className="h-[70vh] animate-pulse rounded-lg border bg-muted/30" />
+    loading: () => <div className="h-[calc(100vh-3.5rem)] animate-pulse rounded-lg bg-muted/20" />
 })
 
 export default function FiberMapPage() {
     return (
         <DashboardLayout>
-            <div className="space-y-6">
-                <PageHeader
-                    title="Fiber Network Mapping"
-                    description="Import, visualize, and manage your fiber optic network infrastructure"
-                    actions={[
-                        { label: "Upload Files", href: "#upload" },
-                        { label: "Sample Data", href: "#samples" },
-                        { label: "Export Map", href: "#export" },
-                    ]}
-                />
-                <FiberMap />
-            </div>
+            <FiberMap />
         </DashboardLayout>
     )
 }

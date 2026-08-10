@@ -2,8 +2,6 @@
 
 import type React from "react"
 
-import { useTheme } from "next-themes"
-import { useState, useEffect } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { ArrowUpIcon, ArrowDownIcon, MinusIcon } from "lucide-react"
 
@@ -27,22 +25,13 @@ export function StatsDisplay({
   iconColor,
   change,
   subtitle,
-  forceDarkMode = false,
 }: StatsDisplayProps) {
-  const { resolvedTheme } = useTheme()
-  const [mounted, setMounted] = useState(false)
-
-  // After mounting, we have access to the theme
-  useEffect(() => setMounted(true), [])
-
-  const isDarkMode = forceDarkMode || (!mounted ? true : resolvedTheme === "dark")
-
   const getChangeIcon = () => {
     switch (change?.type) {
       case "increase":
-        return <ArrowUpIcon className="h-3 w-3 text-green-500" />
+        return <ArrowUpIcon className="h-3 w-3 text-[var(--status-success)]" />
       case "decrease":
-        return <ArrowDownIcon className="h-3 w-3 text-red-500" />
+        return <ArrowDownIcon className="h-3 w-3 text-[var(--status-danger)]" />
       default:
         return <MinusIcon className="h-3 w-3 text-slate-400" />
     }
@@ -51,21 +40,21 @@ export function StatsDisplay({
   const getChangeColor = () => {
     switch (change?.type) {
       case "increase":
-        return "text-green-500"
+        return "text-[var(--status-success)]"
       case "decrease":
-        return "text-red-500"
+        return "text-[var(--status-danger)]"
       default:
-        return isDarkMode ? "text-slate-400" : "text-slate-500"
+        return "text-muted-foreground"
     }
   }
 
   return (
     <Card className="overflow-hidden border-border bg-card">
-      <CardContent className="p-6">
+      <CardContent className="p-4">
         <div className="flex justify-between items-start">
           <div>
-            <p className={`text-sm font-medium ${isDarkMode ? "text-slate-400" : "text-slate-500"}`}>{title}</p>
-            <p className="data-value mt-1 text-2xl font-semibold text-foreground">{value}</p>
+            <p className="text-[11px] font-medium text-muted-foreground">{title}</p>
+            <p className="data-value mt-2 text-2xl font-semibold text-foreground">{value}</p>
 
             {(change || subtitle) && (
               <div className="flex items-center mt-2">
@@ -78,7 +67,7 @@ export function StatsDisplay({
 
                 {subtitle && (
                   <span
-                    className={`text-xs ${isDarkMode ? "text-slate-400" : "text-slate-500"} ${change ? "ml-2" : ""}`}
+                    className={`text-xs text-muted-foreground ${change ? "ml-2" : ""}`}
                   >
                     {subtitle}
                   </span>
@@ -87,7 +76,7 @@ export function StatsDisplay({
             )}
           </div>
 
-          <div className="rounded-full p-3" style={{ backgroundColor: `${iconColor}20` }}>
+          <div className="rounded-xl border p-2.5" style={{ backgroundColor: `${iconColor}16`, borderColor: `${iconColor}30` }}>
             {icon}
           </div>
         </div>

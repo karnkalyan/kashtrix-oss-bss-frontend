@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import Link from "next/link"
 import { CardContainer } from "@/components/ui/card-container"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -21,6 +22,7 @@ import {
   ChevronDown,
   ChevronUp,
   EyeOff,
+  ExternalLink,
 } from "lucide-react"
 import {
   Dialog,
@@ -42,6 +44,7 @@ import { useAuth } from "@/contexts/AuthContext"
 
 interface CustomerTicketsProps {
   customerId: number
+  headingVariant?: "default" | "profile"
 }
 
 interface Ticket {
@@ -66,7 +69,7 @@ interface TicketComment {
   user: { id: number; name: string; email: string }
 }
 
-export function CustomerTickets({ customerId }: CustomerTicketsProps) {
+export function CustomerTickets({ customerId, headingVariant = "default" }: CustomerTicketsProps) {
   const { hasPermission } = useAuth()
   const [tickets, setTickets] = useState<Ticket[]>([])
   const [loading, setLoading] = useState(true)
@@ -210,13 +213,29 @@ export function CustomerTickets({ customerId }: CustomerTicketsProps) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <LifeBuoy className="h-5 w-5 text-primary" />
-          <h3 className="text-lg font-semibold">Support Tickets</h3>
-          <Badge variant="secondary">{tickets.length}</Badge>
+      <div className={headingVariant === "profile" ? "customer-tab-heading" : "flex items-center justify-between"}>
+        <div className={headingVariant === "profile" ? "customer-tab-heading-copy" : "flex items-center gap-2"}>
+          {headingVariant === "profile" ? (
+            <span className="customer-tab-heading-icon" aria-hidden="true">
+              <LifeBuoy className="h-5 w-5" />
+            </span>
+          ) : (
+            <LifeBuoy className="h-5 w-5 text-primary" />
+          )}
+          <div className={headingVariant === "profile" ? "min-w-0" : "flex items-center gap-2"}>
+            {headingVariant === "profile" && <p className="customer-tab-heading-eyebrow">Customer care</p>}
+            <div className="flex items-center gap-2">
+              <h3 className={headingVariant === "profile" ? "customer-tab-heading-title" : "text-lg font-semibold"}>Support Tickets</h3>
+              <Badge variant="secondary">{tickets.length}</Badge>
+            </div>
+            {headingVariant === "profile" && (
+              <p className="customer-tab-heading-description">
+                Track open requests, service incidents, ownership, and resolution progress for this account.
+              </p>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className={headingVariant === "profile" ? "customer-tab-heading-actions" : "flex items-center gap-2"}>
           {showCommentsEnabled === false && (
             <div className="flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 px-2.5 py-1 rounded-full">
               <EyeOff className="h-3 w-3" />
@@ -302,7 +321,9 @@ export function CustomerTickets({ customerId }: CustomerTicketsProps) {
                 <div className="flex items-center gap-3 flex-1">
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-mono text-xs text-muted-foreground">{ticket.ticketNumber}</span>
+                      <Link href={`/tickets/${ticket.id}`} onClick={e => e.stopPropagation()} className="font-mono text-xs font-bold text-primary hover:underline flex items-center gap-1">
+                        {ticket.ticketNumber} <ExternalLink className="h-3 w-3" />
+                      </Link>
                       <Badge className={getStatusColor(ticket.status)}>{ticket.status.replace("_", " ")}</Badge>
                       <Badge className={getPriorityColor(ticket.priority)} variant="outline">{ticket.priority}</Badge>
                       {ticket.category && <Badge variant="outline" className="text-xs">{ticket.category}</Badge>}
@@ -330,6 +351,13 @@ export function CustomerTickets({ customerId }: CustomerTicketsProps) {
 
               {expandedTicket === ticket.id && (
                 <div className="border-t px-4 pb-4 pt-3 space-y-4 bg-slate-50/50 dark:bg-slate-900/50">
+                  <div className="flex justify-end">
+                    <Button asChild size="sm" variant="outline" className="gap-1.5 text-xs font-semibold">
+                      <Link href={`/tickets/${ticket.id}`}>
+                        <ExternalLink className="h-3.5 w-3.5 text-blue-600" /> View Ticket Details Page
+                      </Link>
+                    </Button>
+                  </div>
                   {ticket.description && (
                     <div className="text-sm text-muted-foreground bg-white dark:bg-slate-800 p-3 rounded-lg border">
                       {ticket.description}

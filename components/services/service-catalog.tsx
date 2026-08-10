@@ -70,9 +70,9 @@ const defaultProviderTemplates: Record<string, { baseUrl: string; apiVersion: st
             api_port: 80,
             version: "2.0.0",
             defaultCredentials: {
-                pbx_ip: "10.3.2.50",
-                username: "kisan",
-                password: "Kisan@123"
+                pbx_ip: "",
+                username: "",
+                password: ""
             }
         }
     },
@@ -84,15 +84,15 @@ const defaultProviderTemplates: Record<string, { baseUrl: string; apiVersion: st
             ari_port: 8088,
             ari_app_name: "kisan",
             defaultCredentials: {
-                ami_host: "10.3.2.51",
-                ami_port: "5038",
-                ami_username: "kisan_ami",
-                ami_password: "AmiPassword@123",
-                ari_host: "10.3.2.51",
-                ari_port: "8088",
-                ari_username: "kisan_ari",
-                ari_password: "AriPassword@123",
-                ari_app_name: "kisan"
+                ami_host: "",
+                ami_port: "",
+                ami_username: "",
+                ami_password: "",
+                ari_host: "",
+                ari_port: "",
+                ari_username: "",
+                ari_password: "",
+                ari_app_name: ""
             }
         }
     },

@@ -1,7 +1,6 @@
 import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
 import type { LucideIcon } from "lucide-react"
 import React from "react"
 
@@ -27,7 +26,7 @@ interface PageHeaderProps {
 
   badge?: {
     text: string
-    variant?: "default" | "secondary" | "destructive" | "success" | "warning" | "outline"
+    variant?: "default" | "secondary" | "destructive" | "success" | "warning" | "info" | "critical" | "major" | "maintenance" | "neutral" | "outline"
   }
 
   breadcrumbs?: Breadcrumb[]
@@ -44,10 +43,10 @@ export function PageHeader({
   actions,
 }: PageHeaderProps) {
   return (
-    <div className="space-y-4 border-b border-border pb-5">
+    <header data-ui="page-header" className="space-y-4 border-b border-border pb-5">
       {/* Breadcrumbs */}
       {breadcrumbs && breadcrumbs.length > 0 && (
-        <nav aria-label="Breadcrumb" className="flex items-center text-xs text-muted-foreground">
+        <nav aria-label="Breadcrumb" className="flex flex-wrap items-center text-[11px] text-muted-foreground">
           {breadcrumbs.map((crumb, index) => (
             <React.Fragment key={index}>
               {crumb.href ? (
@@ -73,15 +72,15 @@ export function PageHeader({
         <div className="flex items-start gap-3">
           {/* Icon */}
           {Icon && (
-            <div className="rounded-[8px] border bg-card p-2">
-              <Icon className="h-6 w-6 text-primary" />
+            <div className="rounded-xl border border-primary/15 bg-primary/[0.055] p-2.5 text-primary">
+              <Icon className="h-5 w-5" />
             </div>
           )}
 
           {/* Title + Description */}
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h1 className="font-heading text-[28px] font-semibold leading-tight tracking-[-0.02em] md:text-[32px]">
+              <h1 className="truncate font-heading text-2xl font-semibold leading-tight tracking-[-0.025em] md:text-[28px]">
                 {title}
               </h1>
 
@@ -93,7 +92,7 @@ export function PageHeader({
             </div>
 
             {description && (
-              <p className="mt-1 text-sm text-muted-foreground">
+              <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">
                 {description}
               </p>
             )}
@@ -102,7 +101,7 @@ export function PageHeader({
 
         {/* Actions */}
         {actions && actions.length > 0 && (
-          <div className="flex flex-wrap gap-2">
+          <div className="flex shrink-0 flex-wrap gap-2">
             {actions.map((action, index) =>
               action.component ? (
                 <React.Fragment key={index}>
@@ -125,6 +124,6 @@ export function PageHeader({
           </div>
         )}
       </div>
-    </div>
+    </header>
   )
 }

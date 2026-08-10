@@ -6,15 +6,15 @@ import { LoaderCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-[7px] text-[13px] font-semibold ring-offset-background transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg text-[13px] font-semibold ring-offset-background transition-[background-color,border-color,color,box-shadow,transform] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 active:translate-y-px disabled:pointer-events-none disabled:opacity-50 disabled:shadow-none [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        default: "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 hover:shadow",
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90",
         outline:
-          "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
+          "border border-input bg-card shadow-sm hover:border-border-strong hover:bg-accent hover:text-accent-foreground",
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         ghost: "hover:bg-accent hover:text-accent-foreground",
@@ -44,7 +44,7 @@ export interface ButtonProps
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, loading = false, children, disabled, ...props }, ref) => {
+  ({ className, variant, size, asChild = false, loading = false, children, disabled, title, ...props }, ref) => {
     const Comp = asChild ? Slot : "button"
     const content = asChild ? children : (
       <>
@@ -54,10 +54,13 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     )
     return (
       <Comp
+        data-ui="button"
         className={cn(buttonVariants({ variant, size, className }))}
         ref={ref}
         aria-busy={loading || undefined}
+        aria-label={props["aria-label"] || ((!asChild && (size === "icon" || size === "icon-sm") && title) ? title : undefined)}
         disabled={disabled || loading}
+        title={title}
         {...props}
       >
         {content}

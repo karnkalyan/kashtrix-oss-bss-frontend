@@ -13,10 +13,10 @@ export function SectionContainer({ title, description, children, className, acti
   return (
     <div className={cn("space-y-4", className)}>
       {(title || description) && (
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            {title && <h2 className="text-2xl font-bold tracking-tight text-slate-100">{title}</h2>}
-            {description && <p className="text-slate-400">{description}</p>}
+            {title && <h2 className="font-heading text-lg font-semibold tracking-tight text-foreground">{title}</h2>}
+            {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
           </div>
           {action && <div>{action}</div>}
         </div>

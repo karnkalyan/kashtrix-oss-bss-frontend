@@ -14,14 +14,20 @@ export interface Device {
 }
 
 export interface WanConnection {
-    wanDeviceIndex: string;
-    wanConnectionDeviceIndex: string;
+    root?: string;
+    modelRoot?: "TR-098" | "TR-181";
+    wanDeviceIndex?: string;
+    wanConnectionDeviceIndex?: string;
     connectionIndex: string;
     type: string;
     externalIPAddress?: string;
+    ipAddress?: string;
     macAddress?: string;
+    macAddressSource?: string;
     connectionStatus: string;
     connectionType: string;
+    addressingType?: string;
+    lowerLayers?: string;
     gateway?: string;
     subnetMask?: string;
     dnsServers: string[];
@@ -33,6 +39,30 @@ export interface WanConnection {
     remoteIPAddress?: string;
     transportType?: string;
     authenticationProtocol?: string;
+    compressionProtocol?: string;
+    encryptionProtocol?: string;
+    pppoeAcName?: string;
+    pppoeServiceName?: string;
+    pppoeSessionId?: number;
+    currentMRU?: number;
+    maximumMRU?: number;
+    pppoeACName?: string;
+    pppoeSessionID?: number | string;
+    mru?: number;
+    maxMRU?: number;
+    lcpEchoInterval?: number;
+    lcpEchoRetryCount?: number;
+    vlanId?: number | string;
+    vlan?: number;
+    vlanPriority?: number;
+    serviceType?: string;
+    connectionTrigger?: string;
+    routeProtocolRx?: string;
+    dhcpServerIPAddress?: string;
+    dhcpLeaseTime?: number;
+    enabled?: boolean;
+    accessControl?: Record<string, { enabled?: boolean; trusted?: boolean }>;
+    stats?: Record<string, number>;
     ipv6Address?: string;
     ipv6Gateway?: string;
     ipv6Prefix?: string;
@@ -60,6 +90,8 @@ export interface DeviceInfo {
     memoryTotal: number;
     cpuUsage: number;
     cpuTemp: string;
+    rxPower?: string;
+    lastContact?: string;
     additionalHardwareVersion: string;
     additionalSoftwareVersion: string;
     xAluComGeUpLinkEnable: boolean;
