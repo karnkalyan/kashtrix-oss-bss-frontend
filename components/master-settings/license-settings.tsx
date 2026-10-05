@@ -58,7 +58,6 @@ export type GeneratedLicense = {
   updatedAt?: string
 }
 
-const LICENSE_SERVER_URL = "https://license.simulcast.com.np"
 
 export function LicenseSettings() {
   const [status, setStatus] = useState<LicenseStatus | null>(null)
@@ -185,11 +184,7 @@ export function LicenseSettings() {
                 {status.provisioningId}
               </div>
               <p className="text-[11px] text-muted-foreground">
-                Paste this Provisioning ID on the{" "}
-                <a href={LICENSE_SERVER_URL} target="_blank" rel="noreferrer" className="underline text-primary">
-                  Secure License Manager Portal
-                </a>{" "}
-                to issue or update the license for this node.
+                Provide this Provisioning ID to the Secure License Administrator to issue or update the license for this node.
               </p>
             </div>
           )}
@@ -246,30 +241,17 @@ export function LicenseSettings() {
             placeholder="eyJhbGciOiJFZERTQSI..."
             className="font-mono text-xs"
           />
-          <div className="flex justify-between items-center">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              asChild
-            >
-              <a href={LICENSE_SERVER_URL} target="_blank" rel="noreferrer">
-                <ExternalLink className="mr-2 h-4 w-4" />
-                Open License Server
-              </a>
-            </Button>
-            <div className="flex gap-2">
-              {isActivated && (
-                <Button variant="destructive" onClick={remove} disabled={loading}>
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  Deactivate License
-                </Button>
-              )}
-              <Button onClick={install} disabled={loading || !token.trim()}>
-                {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
-                Install License
+          <div className="flex justify-end items-center gap-2">
+            {isActivated && (
+              <Button variant="destructive" onClick={remove} disabled={loading}>
+                <Trash2 className="mr-2 h-4 w-4" />
+                Deactivate License
               </Button>
-            </div>
+            )}
+            <Button onClick={install} disabled={loading || !token.trim()}>
+              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
+              Install License
+            </Button>
           </div>
         </div>
       </CardContainer>
@@ -326,11 +308,7 @@ export function LicenseGenerator({ onGenerated }: { onGenerated?: (license: Gene
             Centralized License Provisioning
           </div>
           <p className="text-xs text-muted-foreground leading-relaxed">
-            Licenses for this instance are generated through the centralized Secure License Server at{" "}
-            <a href={LICENSE_SERVER_URL} target="_blank" rel="noreferrer" className="underline text-primary font-medium">
-              {LICENSE_SERVER_URL}
-            </a>
-            . Provide your Provisioning ID below to authorize or renew entitlements.
+            Licenses for this instance are issued through your centralized Secure License Administrator. Provide your Provisioning ID below to authorize or renew entitlements.
           </p>
 
           {status?.provisioningId && (
@@ -361,18 +339,12 @@ export function LicenseGenerator({ onGenerated }: { onGenerated?: (license: Gene
             value={token}
             onChange={(e) => setToken(e.target.value)}
             rows={4}
-            placeholder="Paste your signed license token from license.simulcast.com.np"
+            placeholder="Paste your signed license token (JWT)"
             className="font-mono text-xs"
           />
         </div>
 
-        <div className="flex justify-between items-center">
-          <Button variant="outline" asChild size="sm">
-            <a href={LICENSE_SERVER_URL} target="_blank" rel="noreferrer">
-              <ExternalLink className="mr-2 h-4 w-4" />
-              Open License Server
-            </a>
-          </Button>
+        <div className="flex justify-end items-center">
           <Button onClick={install} disabled={loading || !token.trim()}>
             {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
             Activate License Key

@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import Link from "next/link"
 import {
-  AlertCircle, RefreshCw, Activity, Wifi,
+  AlertCircle, AlertTriangle, RefreshCw, Activity, Wifi,
   Server, Search, Globe, PhoneCall, Bot,
   Shield, Network, Play, Square, Settings as SettingsIcon,
   Plus, Trash, HelpCircle, PhoneOff, Check, Ban, Eye
@@ -248,40 +249,39 @@ export default function AsteriskDashboard({ ispId }: AsteriskDashboardProps) {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const response = await apiRequest<{ success: boolean; data: AsteriskStatus }>('/asterisk/status')
+      const response = await apiRequest<{ success: boolean; data: AsteriskStatus }>('/asterisk/status', { suppressToast: true })
       if (response.success) setStatus(response.data)
     } catch (error) {
-      console.error("❌ Error fetching Asterisk status:", error)
+      // Quietly handled
     }
   }, [])
 
   const fetchCapabilities = useCallback(async () => {
     try {
-      const response = await apiRequest<{ success: boolean; data: CapabilityMatrix }>('/asterisk/capabilities')
+      const response = await apiRequest<{ success: boolean; data: CapabilityMatrix }>('/asterisk/capabilities', { suppressToast: true })
       if (response.success) setCapabilities(response.data)
     } catch (e) {}
   }, [])
 
   const fetchSystemInfo = useCallback(async () => {
     try {
-      const response = await apiRequest<{ success: boolean; data: SystemInfo }>('/asterisk/system/info')
+      const response = await apiRequest<{ success: boolean; data: SystemInfo }>('/asterisk/system/info', { suppressToast: true })
       if (response.success) setSystemInfo(response.data)
     } catch (e) {}
   }, [])
 
   const fetchExtensions = useCallback(async () => {
     try {
-      const response = await apiRequest<{ success: boolean; data: Extension[] }>('/asterisk/extensions')
+      const response = await apiRequest<{ success: boolean; data: Extension[] }>('/asterisk/extensions', { suppressToast: true })
       if (response.success) setExtensions(response.data || [])
     } catch (e) {}
   }, [])
 
   const fetchAiAgents = useCallback(async () => {
     try {
-      const response = await apiRequest<{ success: boolean; data: AIAgent[] }>('/asterisk/ai-agents')
+      const response = await apiRequest<{ success: boolean; data: AIAgent[] }>('/asterisk/ai-agents', { suppressToast: true })
       if (response.success) {
         setAiAgents(response.data || [])
-        // Auto check health of first load
         response.data.forEach(agent => {
           handleTestAgentHealth(agent.id)
         })
@@ -291,14 +291,14 @@ export default function AsteriskDashboard({ ispId }: AsteriskDashboardProps) {
 
   const fetchTrunks = useCallback(async () => {
     try {
-      const response = await apiRequest<{ success: boolean; data: Trunk[] }>('/asterisk/trunks')
+      const response = await apiRequest<{ success: boolean; data: Trunk[] }>('/asterisk/trunks', { suppressToast: true })
       if (response.success) setTrunks(response.data || [])
     } catch (e) {}
   }, [])
 
   const fetchActiveCalls = useCallback(async () => {
     try {
-      const response = await apiRequest<{ success: boolean; data: any[] }>('/asterisk/calls/active')
+      const response = await apiRequest<{ success: boolean; data: any[] }>('/asterisk/calls/active', { suppressToast: true })
       if (response.success) {
         const mapped = response.data.map(c => ({
           channelId: c.channelId || c.channelid,
@@ -316,7 +316,7 @@ export default function AsteriskDashboard({ ispId }: AsteriskDashboardProps) {
 
   const fetchCallLogs = useCallback(async () => {
     try {
-      const response = await apiRequest<{ success: boolean; data: any[] }>('/asterisk/calls/logs')
+      const response = await apiRequest<{ success: boolean; data: any[] }>('/asterisk/calls/logs', { suppressToast: true })
       if (response.success) {
         setCallLogs(response.data || [])
       }
@@ -325,83 +325,93 @@ export default function AsteriskDashboard({ ispId }: AsteriskDashboardProps) {
 
   const fetchInboundRoutes = useCallback(async () => {
     try {
-      const response = await apiRequest<{ success: boolean; data: InboundRoute[] }>('/asterisk/routes/inbound')
+      const response = await apiRequest<{ success: boolean; data: InboundRoute[] }>('/asterisk/routes/inbound', { suppressToast: true })
       if (response.success) setInboundRoutes(response.data || [])
     } catch (e) {}
   }, [])
 
   const fetchOutboundRoutes = useCallback(async () => {
     try {
-      const response = await apiRequest<{ success: boolean; data: OutboundRoute[] }>('/asterisk/routes/outbound')
+      const response = await apiRequest<{ success: boolean; data: OutboundRoute[] }>('/asterisk/routes/outbound', { suppressToast: true })
       if (response.success) setOutboundRoutes(response.data || [])
     } catch (e) {}
   }, [])
 
   const fetchQueues = useCallback(async () => {
     try {
-      const response = await apiRequest<{ success: boolean; data: Queue[] }>('/asterisk/queues')
+      const response = await apiRequest<{ success: boolean; data: Queue[] }>('/asterisk/queues', { suppressToast: true })
       if (response.success) setQueues(response.data || [])
     } catch (e) {}
   }, [])
 
   const fetchRingGroups = useCallback(async () => {
     try {
-      const response = await apiRequest<{ success: boolean; data: RingGroup[] }>('/asterisk/ring-groups')
+      const response = await apiRequest<{ success: boolean; data: RingGroup[] }>('/asterisk/ring-groups', { suppressToast: true })
       if (response.success) setRingGroups(response.data || [])
     } catch (e) {}
   }, [])
 
   const fetchIvrs = useCallback(async () => {
     try {
-      const response = await apiRequest<{ success: boolean; data: IVR[] }>('/asterisk/ivr')
+      const response = await apiRequest<{ success: boolean; data: IVR[] }>('/asterisk/ivr', { suppressToast: true })
       if (response.success) setIvrs(response.data || [])
     } catch (e) {}
   }, [])
 
   const fetchRecordings = useCallback(async () => {
     try {
-      const response = await apiRequest<{ success: boolean; data: Recording[] }>('/asterisk/recordings')
+      const response = await apiRequest<{ success: boolean; data: Recording[] }>('/asterisk/recordings', { suppressToast: true })
       if (response.success) setRecordings(response.data || [])
     } catch (e) {}
   }, [])
 
   const fetchProvConfig = useCallback(async () => {
     try {
-      const response = await apiRequest<{ success: boolean; data: ProvisioningConfig }>('/asterisk/provisioning')
+      const response = await apiRequest<{ success: boolean; data: ProvisioningConfig }>('/asterisk/provisioning', { suppressToast: true })
       if (response.success) setProvConfig(response.data)
     } catch (e) {}
   }, [])
 
   const handleRefreshAll = async () => {
     setLoading(true)
-    await Promise.all([
-      fetchStatus(),
-      fetchCapabilities(),
-      fetchSystemInfo(),
-      fetchExtensions(),
-      fetchAiAgents(),
-      fetchTrunks(),
-      fetchActiveCalls(),
-      fetchCallLogs(),
-      fetchInboundRoutes(),
-      fetchOutboundRoutes(),
-      fetchQueues(),
-      fetchRingGroups(),
-      fetchIvrs(),
-      fetchRecordings(),
-      fetchProvConfig()
-    ])
-    setLoading(false)
-    toast.success("Asterisk VoIP Module data refreshed")
+    try {
+      const [statusRes, capRes] = await Promise.all([
+        apiRequest<{ success: boolean; data: AsteriskStatus }>('/asterisk/status', { suppressToast: true }).catch(() => null),
+        apiRequest<{ success: boolean; data: CapabilityMatrix }>('/asterisk/capabilities', { suppressToast: true }).catch(() => null),
+        fetchSystemInfo(),
+        fetchProvConfig()
+      ])
+      if (statusRes?.success && statusRes.data) setStatus(statusRes.data)
+      if (capRes?.success && capRes.data) setCapabilities(capRes.data)
+
+      const isLive = Boolean((statusRes?.data as any)?.connected || capRes?.data?.ari?.connected)
+      if (isLive) {
+        await Promise.all([
+          fetchExtensions(),
+          fetchAiAgents(),
+          fetchTrunks(),
+          fetchActiveCalls(),
+          fetchCallLogs(),
+          fetchInboundRoutes(),
+          fetchOutboundRoutes(),
+          fetchQueues(),
+          fetchRingGroups(),
+          fetchIvrs(),
+          fetchRecordings()
+        ])
+      }
+    } finally {
+      setLoading(false)
+    }
   }
 
   // Active call polling
   useEffect(() => {
-    if (activeTab !== "active") return
+    if (activeTab !== "active" || (!status?.connected && !capabilities?.ari?.connected)) return
     fetchActiveCalls()
-    const timer = setInterval(fetchActiveCalls, 3000)
+    const timer = setInterval(fetchActiveCalls, 5000)
     return () => clearInterval(timer)
-  }, [activeTab, fetchActiveCalls])
+  }, [activeTab, capabilities?.ari?.connected, fetchActiveCalls, status?.connected])
 
   useEffect(() => {
     handleRefreshAll()
@@ -561,6 +571,25 @@ export default function AsteriskDashboard({ ispId }: AsteriskDashboardProps) {
 
   return (
     <div className="space-y-6">
+      {(!capabilities?.ari?.connected && !status?.connected) && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-800 dark:text-amber-200">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0" />
+              <div>
+                <h4 className="font-semibold text-sm">VoIP Service Disconnected / Not Configured</h4>
+                <p className="text-xs opacity-90 mt-0.5">
+                  Asterisk PBX is currently unconfigured or offline. Configure connection parameters in Service Integrations to enable extensions, SIP trunks, and AI voice agents.
+                </p>
+              </div>
+            </div>
+            <Button size="sm" variant="outline" asChild className="border-amber-500/40 hover:bg-amber-500/20 shrink-0">
+              <Link href="/services">Configure Service</Link>
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Overview stats cards */}
       <CardContainer title="System Connectivity Matrix" actions={[{ label: "Refresh All", onClick: handleRefreshAll, icon: <RefreshCw className="h-4 w-4" /> }]}>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

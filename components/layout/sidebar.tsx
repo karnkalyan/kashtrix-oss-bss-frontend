@@ -218,11 +218,11 @@ const menuCategories: MenuCategory[] = [
         ],
       },
       {
-        title: "Migrations",
+        title: "Existing ISP",
         icon: RefreshCw,
         permission: "existingisp_read",
         submenu: [
-          { title: "Migration Workspace", href: "/existing-isp", permission: "existingisp_read" },
+          { title: "Existing ISP", href: "/existing-isp", permission: "existingisp_read" },
         ],
       },
       {

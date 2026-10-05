@@ -16,7 +16,6 @@ import { Textarea } from "@/components/ui/textarea"
 import { toast } from "react-hot-toast"
 import { LicenseStatus } from "@/components/master-settings/license-settings"
 
-const LICENSE_SERVER_URL = "https://license.simulcast.com.np"
 
 export default function LicenseGeneratorPage() {
   const router = useRouter()
@@ -136,11 +135,7 @@ export default function LicenseGeneratorPage() {
                   {status.provisioningId}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Copy this Provisioning ID and enter it in the Secure License Manager at{" "}
-                  <a href={LICENSE_SERVER_URL} target="_blank" rel="noreferrer" className="underline text-primary font-medium">
-                    {LICENSE_SERVER_URL}
-                  </a>{" "}
-                  to issue an authorized license token.
+                  Provide this Provisioning ID to the Secure License Administrator to issue an authorized license token.
                 </p>
               </div>
             )}
@@ -181,13 +176,7 @@ export default function LicenseGeneratorPage() {
               placeholder="Paste license JWT token here..."
               className="font-mono text-xs"
             />
-            <div className="flex justify-between items-center">
-              <Button type="button" variant="outline" asChild size="sm">
-                <a href={LICENSE_SERVER_URL} target="_blank" rel="noreferrer">
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  Open License Server
-                </a>
-              </Button>
+            <div className="flex justify-end items-center">
               <Button onClick={activate} disabled={activating || !token.trim()}>
                 {activating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
                 Activate License Key

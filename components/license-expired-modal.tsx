@@ -21,7 +21,6 @@ const DEFAULT_MESSAGE = "Your license has expired. Please install a valid licens
 const SUPPORT_COMPANY = "Kashtrix"
 const SUPPORT_EMAIL = "info@kashtrix.com"
 const SUPPORT_WEBSITE = "https://kashtrix.com"
-const LICENSE_SERVER_URL = "https://license.simulcast.com.np"
 
 type IspInfo = {
   companyName?: string | null
@@ -215,11 +214,7 @@ export function LicenseExpiredModal() {
                   </Button>
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  Paste this KTX provisioning token into the Secure License Server (
-                  <a href={LICENSE_SERVER_URL} target="_blank" rel="noreferrer" className="underline hover:text-foreground">
-                    {LICENSE_SERVER_URL}
-                  </a>
-                  ) to generate your license key.
+                  Provide this KTX provisioning token to your centralized Secure License Administrator to generate your license key.
                 </div>
                 <div className="break-all font-mono text-[11px] bg-background/60 p-2 rounded border">
                   {provisioningId}

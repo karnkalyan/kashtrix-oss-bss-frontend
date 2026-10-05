@@ -344,9 +344,7 @@ class WebSocketClient {
 
   private scheduleReconnect() {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      this.error("Max reconnection attempts reached");
-      if (this.isBrowser())
-        toast.error("Failed to reconnect. Please refresh the page.");
+      this.warnSafe("[WebSocket] Max reconnection attempts reached");
       return;
     }
 
