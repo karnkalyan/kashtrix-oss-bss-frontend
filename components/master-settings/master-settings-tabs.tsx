@@ -136,7 +136,7 @@ export function MasterSettingsTabs() {
           <TabsTrigger value="roles">Role & Sidebar Management</TabsTrigger>
           <TabsTrigger value="ticket-settings">Ticket Settings</TabsTrigger>
           <TabsTrigger value="billing-configuration">Billing Configuration</TabsTrigger>
-          <TabsTrigger value="payment-gateway">Payment Gateway</TabsTrigger>
+          <TabsTrigger value="payment-gateway">Global Payment & Twilio</TabsTrigger>
           <TabsTrigger value="radius-pools">RADIUS Pools</TabsTrigger>
           <TabsTrigger value="services-sync">Services Sync</TabsTrigger>
           <TabsTrigger value="api-tokens">API Tokens & Docs</TabsTrigger>

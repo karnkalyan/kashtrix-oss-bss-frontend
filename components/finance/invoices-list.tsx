@@ -36,6 +36,10 @@ const numberToWords = (amount: number) => {
 const getDisplayPaymentMethod = (pm: string) => {
   if (!pm) return "Payment"
   const cleaned = String(pm).toUpperCase()
+  if (cleaned.includes("STRIPE") || cleaned.includes("CARD")) return "Card Payment (Stripe)"
+  if (cleaned.includes("PAYPAL")) return "PayPal Global"
+  if (cleaned.includes("RAZORPAY")) return "Razorpay"
+  if (cleaned.includes("INSTAPAY")) return "InstaPay"
   if (cleaned.includes("ESEWA")) return "eSewa"
   if (cleaned.includes("KHALTI")) return "Khalti"
   if (cleaned.includes("EPAY")) return "ePay"

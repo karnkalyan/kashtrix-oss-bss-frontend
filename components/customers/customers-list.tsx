@@ -227,6 +227,22 @@ export function CustomersList({ filters, onResetFilters }: CustomersListProps = 
     }
 
     try {
+      // 1. Try Asterisk call
+      const astCall = await apiRequest<any>("/api/asterisk/calls/make", {
+        method: "POST",
+        body: JSON.stringify({
+          sourceExtension: extension,
+          destinationExtension: phoneNumber
+        }),
+        suppressToast: true
+      }).catch(() => null);
+
+      if (astCall?.success) {
+        toast.success(`Asterisk calling ${phoneNumber} from ext ${extension}`);
+        return;
+      }
+
+      // 2. Try Yeastar call
       await apiRequest(`/yeaster/calls/make`, {
         method: "POST",
         body: JSON.stringify({
@@ -239,6 +255,19 @@ export function CustomersList({ filters, onResetFilters }: CustomersListProps = 
       })
       toast.success(`Calling ${phoneNumber}`)
     } catch (error: any) {
+      // 3. Fallback to Twilio Voice call
+      try {
+        const twilioCall = await apiRequest<any>("/api/twilio/call", {
+          method: "POST",
+          body: JSON.stringify({ to: phoneNumber }),
+          suppressToast: true
+        });
+        if (twilioCall?.success) {
+          toast.success(`Twilio Voice calling ${phoneNumber}`);
+          return;
+        }
+      } catch (twErr) {}
+
       const message = String(error?.message || "")
       toast.error(/yeastar|yeaster|asterisk|voip|configured|enabled/i.test(message) ? "Calling is disabled because no VOIP service is enabled" : message || "Failed to initiate call")
     }
@@ -338,15 +367,26 @@ export function CustomersList({ filters, onResetFilters }: CustomersListProps = 
 
     try {
       setSendingSms(true)
-      const result = await apiRequest<any>("/service/sms/send-bulk", {
-        method: "POST",
-        body: JSON.stringify({
-          to: smsCustomer.phoneNumber,
-          text: smsMessage.trim(),
-          type: "customer",
-          provider: selectedSmsProvider,
+      let result: any
+      if (selectedSmsProvider === "TWILIO") {
+        result = await apiRequest<any>("/api/twilio/sms", {
+          method: "POST",
+          body: JSON.stringify({
+            to: smsCustomer.phoneNumber,
+            message: smsMessage.trim(),
+          })
         })
-      })
+      } else {
+        result = await apiRequest<any>("/service/sms/send-bulk", {
+          method: "POST",
+          body: JSON.stringify({
+            to: smsCustomer.phoneNumber,
+            text: smsMessage.trim(),
+            type: "customer",
+            provider: selectedSmsProvider,
+          })
+        })
+      }
       if (result?.success === false || result?.data?.error) {
         const providerError = result?.data?.errors?.[0]?.message || result?.data?.data?.errors?.[0]?.message
         toast.error(providerError || result?.data?.message || result?.error || "Failed to send SMS")
@@ -1059,6 +1099,7 @@ export function CustomersList({ filters, onResetFilters }: CustomersListProps = 
                   <SelectValue placeholder="Select provider" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="TWILIO">Twilio SMS (Global)</SelectItem>
                   {smsProviders.length > 0 ? (
                     smsProviders.map((provider) => (
                       <SelectItem key={String(provider.service?.code || provider.id)} value={String(provider.service?.code || "")}>

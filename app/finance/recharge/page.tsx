@@ -13,11 +13,13 @@ import { apiRequest } from "@/lib/api"
 import { toast } from "react-hot-toast"
 import { useRouter } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
+import { PaymentCheckoutModal } from "@/components/finance/payment-checkout-modal"
 
 export default function RechargePage() {
   const router = useRouter()
   const [searchQuery, setSearchQuery] = useState("")
   const [customers, setCustomers] = useState<any[]>([])
+  const [showCheckoutModal, setShowCheckoutModal] = useState(false)
   const [searching, setSearching] = useState(false)
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null)
   
@@ -312,10 +314,50 @@ export default function RechargePage() {
                     </div>
                   </div>
 
-                  <Button type="submit" disabled={processing} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-11 rounded-lg">
-                    {processing ? "Processing Recharge..." : `Confirm & Process Recharge of ${selectedPackage ? getRechargeAmount(selectedPackage) : 0} NPR`}
-                  </Button>
+                  <div className="space-y-2 pt-2">
+                    <Button
+                      type="button"
+                      onClick={() => setShowCheckoutModal(true)}
+                      className="w-full bg-gradient-to-r from-indigo-600 via-purple-600 to-emerald-600 hover:opacity-90 text-white font-bold h-11 rounded-lg gap-2"
+                    >
+                      <CreditCard className="h-4 w-4" />
+                      Pay with Global Gateway (Card, GPay, Apple Pay, PayPal, UPI)
+                    </Button>
+                    <Button
+                      type="submit"
+                      disabled={processing}
+                      variant="outline"
+                      className="w-full border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800 font-semibold h-11 rounded-lg"
+                    >
+                      {processing ? "Processing Recharge..." : `Record Direct / Cash Recharge (${selectedPackage ? getRechargeAmount(selectedPackage) : 0} NPR)`}
+                    </Button>
+                  </div>
                 </form>
+
+                {selectedCustomer && selectedPackage && (
+                  <PaymentCheckoutModal
+                    isOpen={showCheckoutModal}
+                    onClose={() => setShowCheckoutModal(false)}
+                    customer={{
+                      id: selectedCustomer.id,
+                      name: `${selectedCustomer.firstName || ""} ${selectedCustomer.lastName || ""}`.trim() || selectedCustomer.username,
+                      username: selectedCustomer.connectionUsers?.[0]?.username || selectedCustomer.username,
+                      email: selectedCustomer.email,
+                      phoneNumber: selectedCustomer.phoneNumber
+                    }}
+                    amount={getRechargeAmount(selectedPackage)}
+                    currency="NPR"
+                    packageDetails={{
+                      id: selectedPackage.id,
+                      name: selectedPackage.name || selectedPackage.packagePlanDetails?.planName,
+                      durationDays: selectedPackage.durationDays || 30
+                    }}
+                    onPaymentSuccess={() => {
+                      toast.success("Account successfully recharged!")
+                      setTimeout(() => router.push("/customers"), 1500)
+                    }}
+                  />
+                )}
               </CardContainer>
             )}
           </div>
