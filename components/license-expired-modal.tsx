@@ -149,7 +149,7 @@ export function LicenseExpiredModal() {
 
 
   return (
-    <Dialog open={Boolean(user) && !isLicenseGeneratorPage && gateState !== "active"} onOpenChange={() => {}}>
+    <Dialog open={Boolean(user) && !isLicenseGeneratorPage && gateState !== "active"} onOpenChange={() => { }}>
       <DialogContent
         className="max-w-xl"
         hideCloseButton
