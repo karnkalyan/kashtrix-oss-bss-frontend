@@ -202,7 +202,7 @@ export function LicenseExpiredModal() {
             {provisioningId && (
               <div className="rounded-md border bg-muted/40 p-4 space-y-2">
                 <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold">Client Provisioning ID</div>
+                  <div className="text-sm font-semibold">Client Provisioning ID (KTX Token)</div>
                   <Button
                     type="button"
                     variant="ghost"
@@ -211,15 +211,15 @@ export function LicenseExpiredModal() {
                     onClick={() => navigator.clipboard.writeText(provisioningId)}
                   >
                     <Copy className="mr-1.5 h-3.5 w-3.5" />
-                    Copy
+                    Copy KTX Token
                   </Button>
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  Provide this provisioning identity to the License Manager (
+                  Paste this KTX provisioning token into the Secure License Server (
                   <a href={LICENSE_SERVER_URL} target="_blank" rel="noreferrer" className="underline hover:text-foreground">
                     {LICENSE_SERVER_URL}
                   </a>
-                  ) to issue a secure license.
+                  ) to generate your license key.
                 </div>
                 <div className="break-all font-mono text-[11px] bg-background/60 p-2 rounded border">
                   {provisioningId}
@@ -305,7 +305,7 @@ export function LicenseExpiredModal() {
               {provisioningId && (
                 <Button type="button" variant="outline" onClick={() => navigator.clipboard.writeText(provisioningId)}>
                   <Copy className="mr-2 h-4 w-4" />
-                  Copy Provisioning ID
+                  Copy KTX Provisioning ID
                 </Button>
               )}
               <Button type="button" onClick={() => void verifyLicense()}>
