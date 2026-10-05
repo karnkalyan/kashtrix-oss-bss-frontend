@@ -212,64 +212,62 @@ export function CustomersList({ filters, onResetFilters }: CustomersListProps = 
   const [sendingSms, setSendingSms] = useState(false)
 
   const handleOutboundCall = async (phoneNumber?: string) => {
-    if (!voipEnabled) {
-      toast.error("Calling is disabled because no VOIP service is enabled")
-      return
-    }
     if (!phoneNumber) {
       toast.error("Phone number is not available")
       return
     }
     const extension = String(user?.yeastarExt || user?.extId || "").trim()
-    if (!extension) {
-      toast.error("No VoIP extension is assigned to your user account")
-      return
-    }
 
     try {
-      // 1. Try Asterisk call
-      const astCall = await apiRequest<any>("/api/asterisk/calls/make", {
-        method: "POST",
-        body: JSON.stringify({
-          sourceExtension: extension,
-          destinationExtension: phoneNumber
-        }),
-        suppressToast: true
-      }).catch(() => null);
+      // 1. If VoIP extension exists, try Asterisk or Yeastar
+      if (extension) {
+        const astCall = await apiRequest<any>("/api/asterisk/calls/make", {
+          method: "POST",
+          body: JSON.stringify({
+            sourceExtension: extension,
+            destinationExtension: phoneNumber
+          }),
+          suppressToast: true
+        }).catch(() => null);
 
-      if (astCall?.success) {
-        toast.success(`Asterisk calling ${phoneNumber} from ext ${extension}`);
+        if (astCall?.success) {
+          toast.success(`Asterisk calling ${phoneNumber} from ext ${extension}`);
+          return;
+        }
+
+        const yeastarCall = await apiRequest<any>(`/yeaster/calls/make`, {
+          method: "POST",
+          body: JSON.stringify({
+            extension,
+            caller: extension,
+            callee: phoneNumber,
+            number: phoneNumber,
+            autoanswer: "yes",
+          }),
+          suppressToast: true
+        }).catch(() => null);
+
+        if (yeastarCall?.status === 200 || yeastarCall?.success) {
+          toast.success(`Calling ${phoneNumber}`)
+          return;
+        }
+      }
+
+      // 2. Try Twilio Voice outbound call
+      const twilioCall = await apiRequest<any>("/api/twilio/call", {
+        method: "POST",
+        body: JSON.stringify({ to: phoneNumber })
+      }).catch((e: any) => ({ success: false, error: e.message }));
+
+      if (twilioCall?.success) {
+        toast.success(`Twilio Voice calling ${phoneNumber}`);
         return;
       }
 
-      // 2. Try Yeastar call
-      await apiRequest(`/yeaster/calls/make`, {
-        method: "POST",
-        body: JSON.stringify({
-          extension,
-          caller: extension,
-          callee: phoneNumber,
-          number: phoneNumber,
-          autoanswer: "yes",
-        })
-      })
-      toast.success(`Calling ${phoneNumber}`)
+      toast.error(twilioCall?.error || "Calling is disabled: configure Asterisk, Yeastar, or Twilio in Services");
     } catch (error: any) {
-      // 3. Fallback to Twilio Voice call
-      try {
-        const twilioCall = await apiRequest<any>("/api/twilio/call", {
-          method: "POST",
-          body: JSON.stringify({ to: phoneNumber }),
-          suppressToast: true
-        });
-        if (twilioCall?.success) {
-          toast.success(`Twilio Voice calling ${phoneNumber}`);
-          return;
-        }
-      } catch (twErr) {}
-
       const message = String(error?.message || "")
-      toast.error(/yeastar|yeaster|asterisk|voip|configured|enabled/i.test(message) ? "Calling is disabled because no VOIP service is enabled" : message || "Failed to initiate call")
+      toast.error(message || "Failed to initiate call")
     }
   }
 
