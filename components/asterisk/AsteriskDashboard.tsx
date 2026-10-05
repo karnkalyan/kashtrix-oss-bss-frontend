@@ -11,7 +11,7 @@ import {
   AlertCircle, AlertTriangle, RefreshCw, Activity, Wifi,
   Server, Search, Globe, PhoneCall, Bot,
   Shield, Network, Play, Square, Settings as SettingsIcon,
-  Plus, Trash, HelpCircle, PhoneOff, Check, Ban, Eye
+  Plus, Trash, Edit2, HelpCircle, PhoneOff, Check, Ban, Eye
 } from "lucide-react"
 import { toast } from "react-hot-toast"
 import { apiRequest } from "@/lib/api"

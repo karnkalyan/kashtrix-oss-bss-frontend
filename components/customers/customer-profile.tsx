@@ -1429,6 +1429,9 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
   const [renewPaymentMethodId, setRenewPaymentMethodId] = useState("")
   const [renewFiscalYearId, setRenewFiscalYearId] = useState("")
   const [renewPaymentMethods, setRenewPaymentMethods] = useState<any[]>([])
+  const [renewDiscountType, setRenewDiscountType] = useState<"percentage" | "flat">("flat")
+  const [renewDiscountValue, setRenewDiscountValue] = useState("")
+  const [renewDiscountReason, setRenewDiscountReason] = useState("")
 
   // Removed duplicate state definition
 
@@ -2278,7 +2281,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
               if (deleted) {
                 toast.success("Unregistered ONT from previous OLT", { id: "olt-change-progress" })
               } else {
-                toast.info("Previous OLT registration cleared / not found", { id: "olt-change-progress" })
+                toast("Previous OLT registration cleared / not found", { id: "olt-change-progress" })
               }
             } catch (delErr: any) {
               console.warn("Delete ONT from previous OLT warning:", delErr)
@@ -2835,6 +2838,9 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
       setRenewFiscalYearId(String((years || []).find(year => year.isActive)?.id || ""))
       setRenewPaymentMethods(methods || [])
       setRenewPaymentMethodId(String((methods || []).find(method => method.isDefault)?.id || methods?.[0]?.id || ""))
+      setRenewDiscountType("flat")
+      setRenewDiscountValue("")
+      setRenewDiscountReason("")
     }).catch(() => toast.error("Failed to load billing options"))
   }, [renewPackageOpen])
 
@@ -3049,6 +3055,20 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
     if (!renewPaymentMethodId) return toast.error("Select a payment method")
     try {
       setRenewLoading(true)
+      const baseAmount = customer?.isFree ? 0 : customer?.isRechargeable
+        ? (pkg.renewAmountWithTax ?? pkg.price)
+        : (pkg.initialTotalWithTax ?? pkg.price)
+
+      const parsedDiscount = parseFloat(renewDiscountValue)
+      let discountAmount = 0
+      if (!customer?.isFree && !isNaN(parsedDiscount) && parsedDiscount > 0) {
+        if (renewDiscountType === "percentage") {
+          discountAmount = Math.round((baseAmount * Math.min(100, parsedDiscount)) / 100 * 100) / 100
+        } else {
+          discountAmount = Math.min(baseAmount, Math.round(parsedDiscount * 100) / 100)
+        }
+      }
+      const finalAmount = Math.max(0, Math.round((baseAmount - discountAmount) * 100) / 100)
 
       await apiRequest("/billing/renew", {
         method: 'POST',
@@ -3058,9 +3078,10 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
           invoiceId: renewReceipt.trim(),
           fiscalYearId: Number(renewFiscalYearId),
           paymentMethodId: Number(renewPaymentMethodId),
-          amount: customer?.isFree ? 0 : customer?.isRechargeable
-            ? (pkg.renewAmountWithTax ?? pkg.price)
-            : (pkg.initialTotalWithTax ?? pkg.price)
+          amount: finalAmount,
+          discountType: renewDiscountType,
+          discountValue: parsedDiscount > 0 ? parsedDiscount : 0,
+          discountReason: renewDiscountReason.trim(),
         }),
         headers: {
           'Content-Type': 'application/json',
@@ -3076,6 +3097,9 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
 
       setRenewPackageOpen(false)
       setRenewReceipt("")
+      setRenewDiscountValue("")
+      setRenewDiscountReason("")
+      setRenewDiscountType("flat")
     } catch (error: any) {
       console.error("Error renewing package:", error)
       toast.error(error.message || "Failed to renew package")
@@ -3899,16 +3923,81 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
               <Label htmlFor="renew-receipt">Receipt Number</Label>
               <Input id="renew-receipt" value={renewReceipt} onChange={event => setRenewReceipt(event.target.value)} placeholder="Enter receipt number" />
             </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="renew-discount">Discount</Label>
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={renewDiscountType === "flat" ? "default" : "outline"}
+                    className="h-6 px-2 text-xs"
+                    onClick={() => setRenewDiscountType("flat")}
+                  >
+                    Flat (NPR)
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={renewDiscountType === "percentage" ? "default" : "outline"}
+                    className="h-6 px-2 text-xs"
+                    onClick={() => setRenewDiscountType("percentage")}
+                  >
+                    %
+                  </Button>
+                </div>
+              </div>
+              <Input
+                id="renew-discount"
+                type="number"
+                min="0"
+                max={renewDiscountType === "percentage" ? "100" : undefined}
+                step={renewDiscountType === "percentage" ? "0.1" : "1"}
+                value={renewDiscountValue}
+                onChange={event => setRenewDiscountValue(event.target.value)}
+                placeholder={renewDiscountType === "percentage" ? "e.g. 10 (for 10%)" : "e.g. 500"}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="renew-discount-reason">Discount Reason (Optional)</Label>
+              <Input
+                id="renew-discount-reason"
+                value={renewDiscountReason}
+                onChange={event => setRenewDiscountReason(event.target.value)}
+                placeholder="e.g. Special offer / Loyal customer"
+              />
+            </div>
             <div className="rounded-lg border bg-muted/40 p-3">
               <div className="text-sm text-muted-foreground">Total Price</div>
-              <div className="text-xl font-semibold">
-                {formatPrice((() => {
-                  const pkg = packages.find(item => String(item.id) === renewPackageId)
-                  return customer?.isFree ? 0 : customer?.isRechargeable
-                    ? (pkg?.renewAmountWithTax ?? pkg?.price ?? 0)
-                    : (pkg?.initialTotalWithTax ?? pkg?.price ?? 0)
-                })())}
-              </div>
+              {(() => {
+                const pkg = packages.find(item => String(item.id) === renewPackageId)
+                const base = customer?.isFree ? 0 : customer?.isRechargeable
+                  ? (pkg?.renewAmountWithTax ?? pkg?.price ?? 0)
+                  : (pkg?.initialTotalWithTax ?? pkg?.price ?? 0)
+                const parsed = parseFloat(renewDiscountValue)
+                let disc = 0
+                if (!customer?.isFree && !isNaN(parsed) && parsed > 0) {
+                  if (renewDiscountType === "percentage") {
+                    disc = Math.round((base * Math.min(100, parsed)) / 100 * 100) / 100
+                  } else {
+                    disc = Math.min(base, Math.round(parsed * 100) / 100)
+                  }
+                }
+                const net = Math.max(0, Math.round((base - disc) * 100) / 100)
+                return (
+                  <div>
+                    <div className="text-xl font-semibold text-primary">{formatPrice(net)}</div>
+                    {disc > 0 && (
+                      <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                        <span className="line-through">{formatPrice(base)}</span>
+                        <span className="text-green-600 dark:text-green-400 font-medium">
+                          -{formatPrice(disc)} ({renewDiscountType === "percentage" ? `${parsed}% off` : "Flat discount"})
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
             </div>
             <div className="rounded-lg border bg-muted/40 p-3">
               <div className="text-sm text-muted-foreground">Estimated Expiry Date</div>

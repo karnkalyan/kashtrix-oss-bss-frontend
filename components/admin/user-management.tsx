@@ -42,7 +42,7 @@ export function UserManagement() {
   // ← NEW: real-departments state
   const [departmentOptions, setDepartmentOptions] = useState<{ value: string; label: string }[]>([])
   const [roleOptions, setRoleOptions] = useState<{ value: string; label: string }[]>([])
-  const [branchOptions, setBranchOptions] = useState<{ value: string; label: string }[]>([])
+  const [branchOptions, setBranchOptions] = useState<any[]>([])
 
   // ← NEW: fetch and map your JSON array
 const fetchDepartments = async () => {
@@ -103,7 +103,15 @@ const fetchDepartments = async () => {
       }
       const opts = raw
         .filter((branch: any) => branch.isActive !== false)
-        .map((branch: any) => ({ value: String(branch.id), label: `${branch.name} (${branch.code})` }))
+        .map((branch: any) => ({
+          value: String(branch.id),
+          id: String(branch.id),
+          label: `${branch.name}${branch.code ? ` (${branch.code})` : ""}`,
+          name: branch.name,
+          code: branch.code,
+          parentId: branch.parentId ? String(branch.parentId) : null,
+          parent: branch.parent || null,
+        }))
       setBranchOptions(opts)
     } catch (err: any) {
       console.error("branch fetch failed:", err)

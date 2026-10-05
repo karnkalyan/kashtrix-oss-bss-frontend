@@ -1,25 +1,44 @@
+"use client"
+
+import { useState } from "react"
 import { DashboardLayout } from "@/components/layout/dashboard-layout"
 import { PageHeader } from "@/components/ui/page-header"
 import { CustomersList } from "@/components/customers/customers-list"
-import { Download, Upload, UserPlus, Users } from "lucide-react"
+import {
+  CustomerFilters,
+  CustomerFilterValues,
+  defaultCustomerFilters,
+} from "@/components/customers/customer-filters"
 
 export default function CustomersPage() {
+  const [filters, setFilters] = useState<CustomerFilterValues>(defaultCustomerFilters)
+
+  const handleResetFilters = () => {
+    setFilters(defaultCustomerFilters)
+  }
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
         <PageHeader
-          title="Customers"
-          description="Manage subscriber accounts, service plans, connectivity, and lifecycle status"
-          icon={Users}
-          breadcrumbs={[{ label: "Customers" }, { label: "All Customers" }]}
+          title="Customer Management"
+          description="View and manage all customer accounts"
           actions={[
-            { label: "Import", href: "#", variant: "outline", icon: <Upload /> },
-            { label: "Export", href: "#", variant: "outline", icon: <Download /> },
-            { label: "Add Customer", href: "/customers/new", icon: <UserPlus /> },
+            { label: "Add Customer", href: "/customers/new" },
+            { label: "Import Customers", href: "/import?type=customers" },
+            { label: "Export", href: "#" },
           ]}
         />
 
-        <CustomersList />
+        <CustomerFilters
+          filters={filters}
+          onFilterChange={setFilters}
+          onReset={handleResetFilters}
+        />
+        <CustomersList
+          filters={filters}
+          onResetFilters={handleResetFilters}
+        />
       </div>
     </DashboardLayout>
   )

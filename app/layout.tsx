@@ -3,7 +3,7 @@ import type React from "react";
 import type { Metadata } from "next";
 import "@/app/globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
-import { Toaster } from "react-hot-toast";
+import { AnimatedToaster } from "@/components/animated-toaster";
 import { WebSocketProvider } from "@/contexts/WebSocketContext";
 import { BranchProvider } from "@/contexts/BranchContext";
 import { AuthProvider } from "@/contexts/AuthContext";
@@ -91,28 +91,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 {children}
               </BranchProvider>
               <LicenseExpiredModal />
-              <Toaster
-                position="top-right"
-                toastOptions={{
-                  style: {
-                    background: "var(--theme-card)",
-                    color: "var(--theme-card-foreground)",
-                    border: "1px solid var(--theme-border)",
-                  },
-                  success: {
-                    iconTheme: {
-                      primary: "#10b981",
-                      secondary: "white",
-                    },
-                  },
-                  error: {
-                    iconTheme: {
-                      primary: "#ef4444",
-                      secondary: "white",
-                    },
-                  },
-                }}
-              />
+              <AnimatedToaster />
             </WebSocketProvider>
             </CalendarSystemProvider>
           </AuthProvider>

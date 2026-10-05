@@ -1572,3 +1572,47 @@ html:not(.dark) .leaflet-popup-tip { background: #fff; color: #202a31; }
 @media (prefers-reduced-motion: reduce) {
   [data-ui="skeleton"]::after { animation: none; }
 }
+
+/* Animated Toast & Timer Progress */
+@keyframes toastEnter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -16px, 0) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes toastLeave {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, -16px, 0) scale(0.92);
+  }
+}
+
+@keyframes toastProgress {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}
+
+.animate-toast-enter {
+  animation: toastEnter 0.28s cubic-bezier(0.21, 1.02, 0.73, 1) forwards;
+}
+
+.animate-toast-leave {
+  animation: toastLeave 0.22s cubic-bezier(0.06, 0.71, 0.55, 1) forwards;
+}
+
+.animate-toast-progress {
+  animation: toastProgress linear forwards;
+}

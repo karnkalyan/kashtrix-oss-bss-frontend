@@ -79,7 +79,7 @@ export function BranchHierarchySelector({
   useEffect(() => {
     const allRelevantIds = new Set<string>([
       ...selectedBranchIds.map(String),
-      ...(primaryBranchId ? [String(primaryBranchId)] : []),
+      ...(primaryBranchId && primaryBranchId !== "none" ? [String(primaryBranchId)] : []),
     ])
 
     const neededMainBranchIds = new Set<string>(activeMainBranchIds)
@@ -153,8 +153,8 @@ export function BranchHierarchySelector({
     // Remove main branch and all its sub-branches, except primary branch if it happens to be here
     onChange(
       selectedBranchIds.filter((id) => {
-        if (id === sId) return id === primaryBranchId
-        if (subIds.has(id)) return id === primaryBranchId
+        if (id === sId) return Boolean(primaryBranchId && primaryBranchId !== "none" && id === primaryBranchId)
+        if (subIds.has(id)) return Boolean(primaryBranchId && primaryBranchId !== "none" && id === primaryBranchId)
         return true
       })
     )
@@ -168,7 +168,7 @@ export function BranchHierarchySelector({
         onChange([...selectedBranchIds, sId])
       }
     } else {
-      if (sId !== primaryBranchId) {
+      if (!primaryBranchId || primaryBranchId === "none" || sId !== primaryBranchId) {
         onChange(selectedBranchIds.filter((id) => id !== sId))
       }
     }
@@ -182,7 +182,7 @@ export function BranchHierarchySelector({
         onChange([...selectedBranchIds, sId])
       }
     } else {
-      if (sId !== primaryBranchId) {
+      if (!primaryBranchId || primaryBranchId === "none" || sId !== primaryBranchId) {
         onChange(selectedBranchIds.filter((id) => id !== sId))
       }
     }
@@ -203,7 +203,7 @@ export function BranchHierarchySelector({
     const subIds = new Set(subs.map((s) => String(s.value)))
     onChange(
       selectedBranchIds.filter((id) => {
-        if (subIds.has(id) && id !== primaryBranchId) return false
+        if (subIds.has(id) && (!primaryBranchId || primaryBranchId === "none" || id !== primaryBranchId)) return false
         return true
       })
     )
@@ -216,23 +216,75 @@ export function BranchHierarchySelector({
     }))
   }
 
+  // Check if all branches (main and sub) are selected
+  const allBranchIds = useMemo(() => {
+    return branches.map((b) => String(b.value || b.id)).filter(Boolean)
+  }, [branches])
+
+  const isAllSelected = useMemo(() => {
+    if (allBranchIds.length === 0) return false
+    return allBranchIds.every((id) => selectedBranchIds.includes(id))
+  }, [allBranchIds, selectedBranchIds])
+
+  const handleToggleSelectAll = () => {
+    if (isAllSelected) {
+      // If already all selected, keep only primaryBranchId if set, or empty
+      const nextIds = primaryBranchId ? [String(primaryBranchId)] : []
+      onChange(nextIds)
+      if (primaryBranchId) {
+        setActiveMainBranchIds([String(primaryBranchId)])
+      } else {
+        setActiveMainBranchIds([])
+      }
+    } else {
+      // Select all branches and their sub-branches
+      const allMainIds = mainBranches.map((mb) => String(mb.value || mb.id))
+      setActiveMainBranchIds(allMainIds)
+      onChange(allBranchIds)
+    }
+  }
+
   // Stats calculation
   const totalSelectedCount = selectedBranchIds.length
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div>
           <span className="text-sm font-medium text-foreground">Branch & Sub-Branch Access</span>
           <p className="text-xs text-muted-foreground">
             Search and select branches to manage location and sub-branch access for this user.
           </p>
         </div>
-        {totalSelectedCount > 0 && (
-          <Badge variant="secondary" className="px-2 py-0.5 text-xs font-normal">
-            {totalSelectedCount} location{totalSelectedCount > 1 ? "s" : ""} selected
-          </Badge>
-        )}
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          {totalSelectedCount > 0 && (
+            <Badge variant="secondary" className="px-2 py-0.5 text-xs font-normal">
+              {totalSelectedCount} location{totalSelectedCount > 1 ? "s" : ""} selected
+            </Badge>
+          )}
+          <Button
+            type="button"
+            variant={isAllSelected ? "secondary" : "outline"}
+            size="sm"
+            disabled={disabled || branches.length === 0}
+            onClick={handleToggleSelectAll}
+            className={`text-xs h-7 gap-1 font-medium transition-all ${
+              isAllSelected ? "bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300" : ""
+            }`}
+          >
+            {isAllSelected ? (
+              <>
+                <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                All Branches Selected
+              </>
+            ) : (
+              <>
+                <Plus className="h-3.5 w-3.5" />
+                Select All Branches
+              </>
+            )}
+          </Button>
+        </div>
       </div>
 
       {/* Search & Select Main Branches Dropdown */}
