@@ -87,7 +87,6 @@ const BRANDING_FIELDS: Array<{
 export function SystemSettings() {
   const [settings, setSettings] = useState({
     timezone: "Asia/Kathmandu",
-    defaultCalendarSystem: "AD" as "AD" | "BS",
     currency: "NPR",
     language: "en",
     maintenanceMode: false,
@@ -122,8 +121,11 @@ export function SystemSettings() {
     customerIdNamePartLength: 5,
     showLicenseTab: true,
     leadBranchValidation: "optional",
+    allowDuplicateLeadPhone: "false",
+    allowDuplicateLeadEmail: "false",
     autoGenerateRadius: "false",
     autoGenerateCustomerLogin: "false",
+    auto_update_radius_password: false,
     // NEW: global discount settings for members
     newMemberDiscount: {
       enabled: true,
@@ -225,7 +227,6 @@ export function SystemSettings() {
           setSettings(prev => ({
             ...prev,
             timezone: data.timezone || prev.timezone,
-            defaultCalendarSystem: String(data.defaultCalendarSystem || prev.defaultCalendarSystem).toUpperCase() === "BS" ? "BS" : "AD",
             currency: data.currency || prev.currency,
             language: data.language || prev.language,
             maintenanceMode: data.maintenanceMode === 'true',
@@ -260,8 +261,11 @@ export function SystemSettings() {
             customerIdNamePartLength: parseInt(data.customerIdNamePartLength || '5'),
             showLicenseTab: data.showLicenseTab !== 'false',
             leadBranchValidation: data.leadBranchValidation || prev.leadBranchValidation,
+            allowDuplicateLeadPhone: data.allowDuplicateLeadPhone || prev.allowDuplicateLeadPhone,
+            allowDuplicateLeadEmail: data.allowDuplicateLeadEmail || prev.allowDuplicateLeadEmail,
             autoGenerateRadius: data.autoGenerateRadius || prev.autoGenerateRadius,
             autoGenerateCustomerLogin: data.autoGenerateCustomerLogin || prev.autoGenerateCustomerLogin,
+            auto_update_radius_password: data.auto_update_radius_password === 'true' || data.auto_update_radius_password === 'Enable' || data.autoUpdateRadiusPassword === 'true',
             newMemberDiscount: data.newMemberDiscount ? JSON.parse(data.newMemberDiscount) : prev.newMemberDiscount,
             renewalDiscount: data.renewalDiscount ? JSON.parse(data.renewalDiscount) : prev.renewalDiscount,
           }))
@@ -707,7 +711,7 @@ export function SystemSettings() {
         </CardContainer>
 
         <CardContainer title="Regional Settings" description="Timezone, currency and language settings">
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-2">
               <Label htmlFor="timezone">Timezone</Label>
               <Select value={settings.timezone} onValueChange={(value) => updateSetting("timezone", value)}>
@@ -720,15 +724,6 @@ export function SystemSettings() {
                   <SelectItem value="Asia/Kolkata">Asia/Kolkata</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="defaultCalendarSystem">Default calendar</Label>
-              <Select value={settings.defaultCalendarSystem} onValueChange={(value: "AD" | "BS") => updateSetting("defaultCalendarSystem", value)}>
-                <SelectTrigger id="defaultCalendarSystem"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="AD">AD — Gregorian</SelectItem><SelectItem value="BS">BS — Bikram Sambat</SelectItem></SelectContent>
-              </Select>
-              <p className="text-[11px] text-muted-foreground">Date inputs and displays use this calendar by default; AD remains the canonical calculation date.</p>
             </div>
 
             <div className="space-y-2">
@@ -1230,6 +1225,24 @@ export function SystemSettings() {
                 onChange={(e) => updateSetting("backupRetentionDays", e.target.value)}
               />
             </div>
+
+            <div className="md:col-span-2 p-3 border rounded-lg bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-200/60 dark:border-emerald-800/40 flex items-center justify-between mt-2">
+              <div className="space-y-1 mr-4">
+                <div className="flex items-center gap-2">
+                  <Label className="text-sm font-semibold text-emerald-900 dark:text-emerald-300">Auto-Update RADIUS Login Password</Label>
+                  <span className="text-[10px] font-semibold bg-emerald-200/80 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200 px-1.5 py-0.5 rounded">
+                    Active
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Automatically capture & update customer's RADIUS/PPPoE password in database and FreeRADIUS whenever an authentication attempt with a different password is made, accepting the connection.
+                </p>
+              </div>
+              <Switch
+                checked={settings.auto_update_radius_password ?? false}
+                onCheckedChange={(checked) => updateSetting("auto_update_radius_password", checked)}
+              />
+            </div>
           </div>
         </CardContainer>
 
@@ -1300,6 +1313,28 @@ export function SystemSettings() {
               <Switch
                 checked={settings.autoGenerateCustomerLogin === "true"}
                 onCheckedChange={(checked) => updateSetting("autoGenerateCustomerLogin", checked.toString())}
+              />
+            </div>
+
+            <div className="flex items-center justify-between rounded-lg border p-4">
+              <div className="space-y-0.5">
+                <Label className="text-base">Allow Duplicate Phone in Leads</Label>
+                <p className="text-xs text-muted-foreground">Permit multiple leads to have the same phone number</p>
+              </div>
+              <Switch
+                checked={settings.allowDuplicateLeadPhone === "true"}
+                onCheckedChange={(checked) => updateSetting("allowDuplicateLeadPhone", checked.toString())}
+              />
+            </div>
+
+            <div className="flex items-center justify-between rounded-lg border p-4">
+              <div className="space-y-0.5">
+                <Label className="text-base">Allow Duplicate Email in Leads</Label>
+                <p className="text-xs text-muted-foreground">Permit multiple leads to have the same email address</p>
+              </div>
+              <Switch
+                checked={settings.allowDuplicateLeadEmail === "true"}
+                onCheckedChange={(checked) => updateSetting("allowDuplicateLeadEmail", checked.toString())}
               />
             </div>
           </div>

@@ -25,7 +25,7 @@ export function CalendarSystemProvider({ children }: { children: React.ReactNode
     if (!user) { setLoading(false); return }
     apiRequest<{ system?: string }>("/settings/calendar-system", { suppressToast: true })
       .then(settings => {
-        const fetched = String(settings.system || "AD").toUpperCase() === "BS" ? "BS" : "AD"
+        const fetched = String(settings?.system || "AD").toUpperCase() === "BS" ? "BS" : "AD"
         setSystem(fetched)
         localStorage.setItem("calendar-system-preference", fetched)
       })

@@ -42,27 +42,49 @@
   }
 
   .dark {
-    --background: 280 50% 4%; --foreground: 0 0% 100%;
-    --card: 278 46% 10%; --card-foreground: 0 0% 100%;
-    --popover: 278 46% 10%; --popover-foreground: 0 0% 100%;
-    --primary: 0 0% 100%; --primary-foreground: 282 63% 14%;
-    --secondary: 280 31% 16%; --secondary-foreground: 0 0% 100%;
-    --muted: 280 31% 16%; --muted-foreground: 278 14% 71%;
-    --accent: 282 63% 14%; --accent-foreground: 270 100% 90%;
-    --destructive: 350 67% 42%; --destructive-foreground: 0 0% 100%;
-    --border: 278 36% 20%; --input: 278 36% 25%; --ring: 270 100% 90%;
-    --sidebar-background: 277 52% 7%; --sidebar-foreground: 0 0% 100%;
-    --sidebar-primary: 0 0% 100%; --sidebar-primary-foreground: 282 63% 14%;
-    --sidebar-accent: 282 63% 14%; --sidebar-accent-foreground: 0 0% 100%;
-    --sidebar-border: 278 36% 20%; --sidebar-ring: 270 100% 90%;
-    --theme-bg: #09050f; --theme-text: #fff; --theme-card: #1a0d24;
-    --theme-card-foreground: #fff; --theme-border: #342044;
-    --theme-muted: #2b0d3a; --theme-muted-foreground: #b8a8c2;
-    --status-success: #8dd4b2; --status-success-bg: rgb(47 125 90 / .2);
-    --status-warning: #eac46a; --status-warning-bg: rgb(154 103 0 / .2);
-    --status-danger: #f8a8b5; --status-danger-bg: rgb(180 35 58 / .2);
-    --status-info: #cbbde8; --status-info-bg: rgb(94 74 138 / .25);
-    --kashtrix-magenta-soft: rgb(225 29 114 / .2);
+    --background: 216 16% 6%; /* #0D0F12 */
+    --foreground: 210 13% 92%; /* #E7EAED */
+    --card: 214 16% 8%; /* #121519 */
+    --card-foreground: 210 13% 92%; /* #E7EAED */
+    --popover: 214 16% 8%; /* #121519 */
+    --popover-foreground: 210 13% 92%; /* #E7EAED */
+    --primary: 267 38% 52%; /* #8055B3 Kashtrix signature violet */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 213 16% 11%; /* #181C21 */
+    --secondary-foreground: 210 13% 92%; /* #E7EAED */
+    --muted: 213 16% 11%; /* #181C21 */
+    --muted-foreground: 208 9% 59%; /* #8D969E */
+    --accent: 269 50% 16%; /* #28143C */
+    --accent-foreground: 312 36% 57%; /* #B76BA8 */
+    --destructive: 0 69% 62%; /* #E05B5B */
+    --destructive-foreground: 0 0% 100%;
+    --border: 210 14% 20%; /* #2C333A */
+    --input: 210 14% 20%; /* #2C333A */
+    --ring: 267 38% 52%; /* #8055B3 */
+    --sidebar-background: 216 16% 6%; /* #0D0F12 */
+    --sidebar-foreground: 210 13% 92%; /* #E7EAED */
+    --sidebar-primary: 267 38% 52%; /* #8055B3 */
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 269 50% 16%; /* #28143C */
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 210 14% 20%; /* #2C333A */
+    --sidebar-ring: 267 38% 52%; /* #8055B3 */
+    --theme-bg: #0D0F12;
+    --theme-text: #E7EAED;
+    --theme-card: #121519;
+    --theme-card-foreground: #E7EAED;
+    --theme-border: #2C333A;
+    --theme-muted: #181C21;
+    --theme-muted-foreground: #8D969E;
+    --status-success: #55C878;
+    --status-success-bg: rgb(85 200 120 / .14);
+    --status-warning: #D9AE55;
+    --status-warning-bg: rgb(217 174 85 / .15);
+    --status-danger: #E05B5B;
+    --status-danger-bg: rgb(224 91 91 / .15);
+    --status-info: #8055B3;
+    --status-info-bg: rgb(128 85 179 / .15);
+    --kashtrix-magenta-soft: rgb(183 107 168 / .2);
   }
 
   * { @apply border-border; }
@@ -218,26 +240,49 @@
   }
 
   .dark {
-    --background: 280 50% 4%; --foreground: 0 0% 100%;
-    --card: 278 46% 10%; --card-foreground: 0 0% 100%;
-    --popover: 278 46% 10%; --popover-foreground: 0 0% 100%;
-    --primary: 0 0% 100%; --primary-foreground: 282 63% 14%;
-    --secondary: 280 31% 16%; --secondary-foreground: 0 0% 100%;
-    --muted: 280 31% 16%; --muted-foreground: 278 14% 71%;
-    --accent: 282 63% 14%; --accent-foreground: 270 100% 90%;
-    --destructive: 350 72% 67%; --destructive-foreground: 280 50% 4%;
-    --border: 278 36% 20%; --border-strong: 276 27% 29%; --input: 278 36% 25%; --ring: 270 100% 90%;
-    --sidebar-background: 277 52% 7%; --sidebar-foreground: 0 0% 100%;
-    --sidebar-primary: 0 0% 100%; --sidebar-primary-foreground: 282 63% 14%;
-    --sidebar-accent: 282 63% 14%; --sidebar-accent-foreground: 0 0% 100%;
-    --sidebar-border: 278 36% 20%; --sidebar-ring: 270 100% 90%;
-    --theme-bg: #09050f; --theme-text: #ffffff; --theme-card: #1a0d24;
-    --theme-card-foreground: #ffffff; --theme-border: #342044;
-    --theme-muted: #2b0d3a; --theme-muted-foreground: #b8a8c2;
-    --status-success: #64c98a; --status-success-bg: rgb(100 201 138 / .13);
-    --status-warning: #e8b85c; --status-warning-bg: rgb(232 184 92 / .14);
-    --status-danger: #e87474; --status-danger-bg: rgb(232 116 116 / .14);
-    --status-info: #6fa8ff; --status-info-bg: rgb(111 168 255 / .14);
+    --background: 216 16% 6%; /* #0D0F12 */
+    --foreground: 210 13% 92%; /* #E7EAED */
+    --card: 214 16% 8%; /* #121519 */
+    --card-foreground: 210 13% 92%; /* #E7EAED */
+    --popover: 214 16% 8%; /* #121519 */
+    --popover-foreground: 210 13% 92%; /* #E7EAED */
+    --primary: 267 38% 52%; /* #8055B3 Kashtrix signature violet */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 213 16% 11%; /* #181C21 */
+    --secondary-foreground: 210 13% 92%; /* #E7EAED */
+    --muted: 213 16% 11%; /* #181C21 */
+    --muted-foreground: 208 9% 59%; /* #8D969E */
+    --accent: 269 50% 16%; /* #28143C */
+    --accent-foreground: 312 36% 57%; /* #B76BA8 */
+    --destructive: 0 69% 62%; /* #E05B5B */
+    --destructive-foreground: 0 0% 100%;
+    --border: 210 14% 20%; /* #2C333A */
+    --border-strong: 208 14% 26%; /* #3A444D */
+    --input: 210 14% 20%; /* #2C333A */
+    --ring: 267 38% 52%; /* #8055B3 */
+    --sidebar-background: 216 16% 6%; /* #0D0F12 */
+    --sidebar-foreground: 210 13% 92%; /* #E7EAED */
+    --sidebar-primary: 267 38% 52%; /* #8055B3 */
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 269 50% 16%; /* #28143C */
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 210 14% 20%; /* #2C333A */
+    --sidebar-ring: 267 38% 52%; /* #8055B3 */
+    --theme-bg: #0D0F12;
+    --theme-text: #E7EAED;
+    --theme-card: #121519;
+    --theme-card-foreground: #E7EAED;
+    --theme-border: #2C333A;
+    --theme-muted: #181C21;
+    --theme-muted-foreground: #8D969E;
+    --status-success: #55C878;
+    --status-success-bg: rgb(85 200 120 / .14);
+    --status-warning: #D9AE55;
+    --status-warning-bg: rgb(217 174 85 / .15);
+    --status-danger: #E05B5B;
+    --status-danger-bg: rgb(224 91 91 / .15);
+    --status-info: #8055B3;
+    --status-info-bg: rgb(128 85 179 / .15);
   }
 
   html { color-scheme: dark; }
@@ -564,23 +609,23 @@ html:not(.dark) .leaflet-popup-tip { background: #fff; color: #202a31; }
   #main-content table { min-width: 720px; }
 }
 
-/* 2026 application shell: compact enterprise navigation inspired by the
-   approved dashboard reference while remaining fully theme-token driven. */
+/* KashtrixTheme: Broadcast enterprise navigation and dark palette */
 @layer components {
   .glass-navbar {
     height: 68px;
-    background: color-mix(in srgb, hsl(var(--card)) 94%, transparent) !important;
-    border-bottom-color: hsl(var(--border) / .72);
-    box-shadow: 0 10px 28px -30px hsl(var(--foreground) / .55) !important;
+    background: #0E161F !important;
+    border-bottom: 1px solid #2C333A !important;
+    box-shadow: 0 4px 20px -8px rgba(0, 0, 0, 0.6) !important;
+    color: #E7EAED !important;
   }
   .kashtrix-sidebar {
-    background:
-      radial-gradient(circle at 20% 0%, hsl(var(--primary) / .07), transparent 18rem),
-      hsl(var(--sidebar-background)) !important;
-    box-shadow: 14px 0 38px -40px hsl(var(--foreground) / .7) !important;
+    background: #0D0F12 !important;
+    border-right: 1px solid #2C333A !important;
+    color: #E7EAED !important;
+    box-shadow: 8px 0 24px -10px rgba(0, 0, 0, 0.7) !important;
   }
   .kashtrix-sidebar nav > div + div {
-    border-top: 1px solid hsl(var(--sidebar-border) / .55);
+    border-top: 1px solid #2C333A !important;
     padding-top: .7rem;
   }
   .kashtrix-sidebar button,
@@ -588,16 +633,33 @@ html:not(.dark) .leaflet-popup-tip { background: #fff; color: #202a31; }
     outline-offset: 2px;
   }
   .kashtrix-sidebar [aria-current="page"] {
-    background: linear-gradient(90deg, hsl(var(--primary) / .14), hsl(var(--accent) / .07)) !important;
-    box-shadow: inset 0 0 0 1px hsl(var(--primary) / .08);
+    background: #28143C !important;
+    color: #FFFFFF !important;
+    box-shadow: inset 0 0 0 1px #8055B3 !important;
+    border-left: 3px solid #B76BA8 !important;
+  }
+  .kashtrix-sidebar .text-adaptive {
+    color: #8D969E !important;
+  }
+  .kashtrix-sidebar .text-adaptive:hover {
+    background: #1B1326 !important;
+    color: #F0C8FF !important;
+  }
+  .kashtrix-sidebar .sidebar-category {
+    color: #8D969E !important;
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    font-weight: 600;
   }
   .kashtrix-sidebar .submenu-item[aria-current="page"] {
-    box-shadow: none;
+    background: #28143C !important;
+    color: #F6D6FF !important;
+    box-shadow: none !important;
   }
   #main-content {
     background:
-      radial-gradient(circle at 92% -8%, hsl(var(--primary) / .055), transparent 27rem),
-      hsl(var(--background));
+      radial-gradient(circle at 92% -8%, rgba(128, 85, 179, 0.05), transparent 27rem),
+      #0D0F12;
   }
 }
 

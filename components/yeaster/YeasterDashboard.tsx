@@ -119,7 +119,7 @@ export default function YeastarDashboard({
             setSystemLoading(true)
             console.log('🔄 Fetching system info...')
 
-            const data = await apiRequest<SystemInfo>('/yeaster/system/info')
+            const data = await apiRequest<SystemInfo>('/yeaster/system/info', { suppressToast: true })
             console.log('✅ System info:', data)
             setSystemInfo(data)
             setServerDown(false)

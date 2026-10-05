@@ -29,6 +29,8 @@ export function getDynamicBaseUrl(): string {
   return `http://${hostname}:3200`;
 }
 
+export const getApiUrl = getDynamicBaseUrl;
+
 /**
  * Get WebSocket URL based on current domain
  */

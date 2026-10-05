@@ -23,12 +23,14 @@ export function EnhancementsSettings() {
   const [globalSettings, setGlobalSettings] = useState({
     allow_branch_to_create_subbranch: false,
     show_ticket_comments_to_customer: false,
+    auto_update_radius_password: false,
   })
 
   // Customer Types state
   const [customerTypes, setCustomerTypes] = useState<CustomerType[]>([])
   const [loadingTypes, setLoadingTypes] = useState(true)
   const [savingGlobal, setSavingGlobal] = useState(false)
+  const [syncingRadius, setSyncingRadius] = useState(false)
   
   // Form states for creating/editing customer types
   const [editingType, setEditingType] = useState<CustomerType | null>(null)
@@ -46,6 +48,7 @@ export function EnhancementsSettings() {
         setGlobalSettings({
           allow_branch_to_create_subbranch: settingsData.allow_branch_to_create_subbranch === "true" || settingsData.allow_branch_to_create_subbranch === "Enable",
           show_ticket_comments_to_customer: settingsData.show_ticket_comments_to_customer === "true" || settingsData.show_ticket_comments_to_customer === "Enable",
+          auto_update_radius_password: settingsData.auto_update_radius_password === "true" || settingsData.auto_update_radius_password === "Enable" || settingsData.autoUpdateRadiusPassword === "true",
         })
       }
 
@@ -77,6 +80,11 @@ export function EnhancementsSettings() {
           key: "show_ticket_comments_to_customer",
           value: String(globalSettings.show_ticket_comments_to_customer),
           description: "Display support ticket comments to customer"
+        },
+        {
+          key: "auto_update_radius_password",
+          value: String(globalSettings.auto_update_radius_password),
+          description: "Auto-update customer RADIUS login password on dial-in rejection"
         }
       ]
 
@@ -89,6 +97,25 @@ export function EnhancementsSettings() {
       toast.error(err.message || "Failed to update global controls")
     } finally {
       setSavingGlobal(false)
+    }
+  }
+
+  // Manual Trigger: Sync Rejected RADIUS Passwords Now
+  const handleSyncRadiusPasswords = async () => {
+    setSyncingRadius(true)
+    try {
+      const res = await apiRequest<any>("/services/radius/auto-sync-passwords", {
+        method: "POST"
+      })
+      if (res?.updatedUsersCount > 0) {
+        toast.success(`Successfully auto-updated ${res.updatedUsersCount} rejected user passwords in RADIUS!`)
+      } else {
+        toast.success(res?.message || "RADIUS passwords are fully synchronized.")
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to sync RADIUS passwords")
+    } finally {
+      setSyncingRadius(false)
     }
   }
 
@@ -186,7 +213,7 @@ export function EnhancementsSettings() {
                 />
               </div>
 
-              <div className="flex items-start justify-between pb-4">
+              <div className="flex items-start justify-between border-b pb-4 border-slate-100 dark:border-slate-800">
                 <div className="space-y-1 mr-4">
                   <Label className="text-sm font-semibold">Customer Ticket Comments</Label>
                   <p className="text-xs text-muted-foreground">Toggle visibility of support comments to customers. If disabled, customers will not see internal comment updates.</p>
@@ -197,10 +224,40 @@ export function EnhancementsSettings() {
                 />
               </div>
 
-              <Button onClick={saveGlobalSettings} disabled={savingGlobal} className="w-full flex items-center justify-center gap-2 mt-4 bg-primary text-primary-foreground hover:bg-primary/95 transition-all">
+              <div className="flex items-start justify-between pb-4">
+                <div className="space-y-1 mr-4">
+                  <div className="flex items-center gap-2">
+                    <Label className="text-sm font-semibold">Auto-Update RADIUS Login Password</Label>
+                    <span className="text-[10px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">
+                      RADIUS Auto-Capture
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    When enabled, if a customer dials in with a new/different password that gets rejected, the system will automatically capture the dialed password, update FreeRADIUS and Connection User, and authenticate the customer.
+                  </p>
+                </div>
+                <Switch 
+                  checked={globalSettings.auto_update_radius_password} 
+                  onCheckedChange={v => setGlobalSettings(prev => ({ ...prev, auto_update_radius_password: v }))} 
+                />
+              </div>
+
+              <Button onClick={saveGlobalSettings} disabled={savingGlobal} className="w-full flex items-center justify-center gap-2 mt-2 bg-primary text-primary-foreground hover:bg-primary/95 transition-all">
                 {savingGlobal ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 {savingGlobal ? "Saving Controls..." : "Save Master Toggles"}
               </Button>
+
+              {globalSettings.auto_update_radius_password && (
+                <Button 
+                  onClick={handleSyncRadiusPasswords} 
+                  disabled={syncingRadius} 
+                  variant="outline" 
+                  className="w-full flex items-center justify-center gap-2 mt-2 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 text-xs"
+                >
+                  {syncingRadius ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                  {syncingRadius ? "Scanning & Syncing..." : "Sync Rejected Passwords Now"}
+                </Button>
+              )}
             </div>
           </CardContainer>
         </div>

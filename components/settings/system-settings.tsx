@@ -23,6 +23,8 @@ export function SystemSettings() {
     enableTickets: "true",
     enableMailNotifications: "true",
     leadBranchValidation: "optional",
+    allowDuplicateLeadPhone: "false",
+    allowDuplicateLeadEmail: "false",
     autoGenerateRadius: "false",
     autoGenerateCustomerLogin: "false"
   })
@@ -200,6 +202,28 @@ export function SystemSettings() {
             <Switch 
               checked={settings.autoGenerateCustomerLogin === "true"} 
               onCheckedChange={checked => handleChange("autoGenerateCustomerLogin", checked.toString())} 
+            />
+          </div>
+
+          <div className="flex items-center justify-between p-4 border rounded-lg">
+            <div className="space-y-0.5">
+              <Label className="text-base">Allow Duplicate Phone in Leads</Label>
+              <p className="text-sm text-muted-foreground">Permit multiple leads to have the same phone number</p>
+            </div>
+            <Switch 
+              checked={settings.allowDuplicateLeadPhone === "true"} 
+              onCheckedChange={checked => handleChange("allowDuplicateLeadPhone", checked.toString())} 
+            />
+          </div>
+
+          <div className="flex items-center justify-between p-4 border rounded-lg">
+            <div className="space-y-0.5">
+              <Label className="text-base">Allow Duplicate Email in Leads</Label>
+              <p className="text-sm text-muted-foreground">Permit multiple leads to have the same email address</p>
+            </div>
+            <Switch 
+              checked={settings.allowDuplicateLeadEmail === "true"} 
+              onCheckedChange={checked => handleChange("allowDuplicateLeadEmail", checked.toString())} 
             />
           </div>
         </div>

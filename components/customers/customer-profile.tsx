@@ -2,8 +2,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { useTheme } from "next-themes"
-import { Line } from "react-chartjs-2"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CardContainer } from "@/components/ui/card-container"
 import { Button } from "@/components/ui/button"
@@ -54,7 +52,6 @@ import {
   Plus,
   Search,
   Check,
-  ChevronDown,
   ChevronRight,
   AlertTriangle,
   CheckCircle2,
@@ -72,6 +69,7 @@ import {
   History
 } from "lucide-react"
 import { apiRequest, buildApiAssetUrl, getDynamicBaseUrl } from "@/lib/api"
+import { ServicesAPI } from "@/lib/api/service"
 import { useAuth } from "@/contexts/AuthContext"
 import { Switch } from "@/components/ui/switch"
 
@@ -81,21 +79,17 @@ import { TR069DeviceWanConnections } from "@/components/tr069/device-wan-connect
 import { TR069DeviceWifi } from "@/components/tr069/device-wifi"
 import { TR069DeviceLanInfo } from "@/components/tr069/device-lan"
 import { TR069DeviceNeighbors } from "@/components/tr069/device-neighbors"
-import { WifiClientTopology } from "@/components/tr069/wifi-client-topology"
-import { CustomerOLTFinder } from "@/components/customers/customer-olt-finder"
-import { OpticalPowerIndicator } from "@/components/tr069/optical-power-indicator"
 
 // Realtime Usage Chart
 import { RealtimeUsageChart } from "@/components/customers/realtime-charts"
 import { CustomerBillingManagement } from "@/components/customers/customer-billing-management"
-import { NetTVDialog } from "@/components/customers/add-customer-form"
+import { NetTVDeviceOrderDialog, NetTVDialog } from "@/components/customers/add-customer-form"
 
 import { SearchableSelect } from "@/components/ui/searchable-select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Textarea } from "@/components/ui/textarea"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { OrchestrationConsole } from "@/components/ui/orchestration-console"
 
 import {
   Dialog,
@@ -115,14 +109,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 
 // Chart.js (for DataUsageHistory)
 import {
@@ -136,6 +122,8 @@ import {
   Legend,
   Filler,
 } from "chart.js"
+import { Line } from "react-chartjs-2"
+import { useTheme } from "next-themes"
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
 
@@ -245,8 +233,10 @@ interface Customer {
   leadId?: number
   membershipId: number | null
   branchId: number | null
+  subBranchId?: number | null
   ispId: number
   isRechargeable: boolean
+  isFree?: boolean
   installedById: number | null
   oltId: number | null
   splitterId: number | null
@@ -500,9 +490,9 @@ interface Customer {
     customerId: number
     serviceId: number
     status: string
+    externalUsername?: string | null
     validUntil: string | null
     serviceData: any
-    externalUsername?: string | null
     createdAt: string
     updatedAt: string
     service: {
@@ -536,10 +526,38 @@ interface Customer {
   } | null
 }
 
+function getLinkedNettvUsername(customer?: Customer | null) {
+  const subscription = customer?.subscribedApps?.find(app => {
+    const code = String(app.service?.code || "").toUpperCase()
+    const name = String(app.service?.name || "").toUpperCase()
+    return code === "NETTV" || name.includes("NETTV")
+  })
+  return String(
+    subscription?.externalUsername ||
+    subscription?.serviceData?.username ||
+    subscription?.serviceData?.subscriber?.username ||
+    ""
+  ).trim()
+}
+
+function unwrapCustomerNettvList(value: any, depth = 0): any[] {
+  if (Array.isArray(value)) return value
+  if (!value || typeof value !== "object" || depth > 4) return []
+  for (const candidate of [value?.data, value?.items, value?.results, value?.orders]) {
+    if (Array.isArray(candidate)) return candidate
+    const nested = unwrapCustomerNettvList(candidate, depth + 1)
+    if (nested.length) return nested
+  }
+  return []
+}
+
 interface PackageOption {
   id: number
+  planId: number
   packageName: string
   price: number
+  initialTotalWithTax?: number | null
+  renewAmountWithTax?: number | null
   packageDuration: string
   packagePlanDetails: {
     planName: string
@@ -840,7 +858,7 @@ function DataUsageHistory({ usernames }: DataUsageHistoryProps) {
   }
 
   return (
-    <div className="customer-profile-shell space-y-6">
+    <div className="space-y-6">
       {/* Controls */}
       <div className="flex items-center gap-4 flex-wrap">
         <div className="w-48">
@@ -1059,7 +1077,7 @@ function DeviceDialog({ open, onOpenChange, device, onSave }: DeviceDialogProps)
         ...prev,
         serialNumber: item.serialNumber,
         macAddress: item.macAddress || prev.macAddress,
-        ponSerial: item.ponSerialNumber || prev.ponSerial,
+        ponSerial: item.ponSerialNumber || item.serialNumber || prev.ponSerial,
         ponVendorIdIncluded: item.ponVendorIdIncluded !== false,
         brand: item.name || prev.brand,
         model: item.model || item.type || prev.model,
@@ -1367,6 +1385,8 @@ interface CustomerProfileProps {
 
 export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileProps = {}) {
   const { user } = useAuth()
+  const roleName = String(typeof user?.role === "string" ? user.role : user?.role?.name || "").toLowerCase()
+  const isFieldStaff = roleName.includes("field staff") || roleName.includes("field_staff")
   const [activeTab, setActiveTab] = useState("overview")
   const [customer, setCustomer] = useState<Customer | null>(null)
   const [billingTscPercentage, setBillingTscPercentage] = useState(10)
@@ -1403,12 +1423,19 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [packages, setPackages] = useState<PackageOption[]>([])
+  const [renewPlanId, setRenewPlanId] = useState("")
+  const [renewPackageId, setRenewPackageId] = useState("")
+  const [renewReceipt, setRenewReceipt] = useState("")
+  const [renewPaymentMethodId, setRenewPaymentMethodId] = useState("")
+  const [renewFiscalYearId, setRenewFiscalYearId] = useState("")
+  const [renewPaymentMethods, setRenewPaymentMethods] = useState<any[]>([])
 
   // Removed duplicate state definition
 
   // Additional service details
   const [tshulDetails, setTshulDetails] = useState<any>(null)
   const [nettvDetails, setNettvDetails] = useState<any>(null)
+  const [nettvOrders, setNettvOrders] = useState<any[]>([])
   const [tshulMessage, setTshulMessage] = useState("")
   const [nettvMessage, setNettvMessage] = useState("")
   const [loadingTshul, setLoadingTshul] = useState(false)
@@ -1434,16 +1461,22 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
   const [selectedPlanName, setSelectedPlanName] = useState("")
   const [newMacAddress, setNewMacAddress] = useState("")
   const [actionLoading, setActionLoading] = useState(false)
+  const [rebootingSerial, setRebootingSerial] = useState<string | null>(null)
+  const [rebootDevice, setRebootDevice] = useState<CustomerDevice | null>(null)
   const [removingDeviceKey, setRemovingDeviceKey] = useState<string | null>(null)
   const [acsSyncing, setAcsSyncing] = useState(false)
   const [provisioningStatusSaving, setProvisioningStatusSaving] = useState(false)
   const [serviceActionLoading, setServiceActionLoading] = useState<"radius" | "nettv" | "account" | "disconnect" | null>(null)
   const [nettvProvisionOpen, setNettvProvisionOpen] = useState(false)
+  const [nettvDeviceOrderOpen, setNettvDeviceOrderOpen] = useState(false)
+  const [nettvProvisionUsername, setNettvProvisionUsername] = useState("")
   const [nettvPasswordOpen, setNettvPasswordOpen] = useState(false)
   const [nettvPasswordSaving, setNettvPasswordSaving] = useState(false)
   const [nettvPasswordForm, setNettvPasswordForm] = useState({ password: "", conf_password: "" })
   const [renewLoading, setRenewLoading] = useState(false)
   const [assignHardwareOpen, setAssignHardwareOpen] = useState(false)
+  const [hardwareDialogMode, setHardwareDialogMode] = useState<"add" | "change-olt">("add")
+  const [changeOltDeviceId, setChangeOltDeviceId] = useState<number | null>(null)
   const [hardwareSearch, setHardwareSearch] = useState("")
   const [availableStock, setAvailableStock] = useState<any[]>([])
   const [selectedHardwareId, setSelectedHardwareId] = useState<number | null>(null)
@@ -1461,13 +1494,18 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
   const [identityIdNumber, setIdentityIdNumber] = useState("")
   const [identityPanNumber, setIdentityPanNumber] = useState("")
   const [identitySaving, setIdentitySaving] = useState(false)
+
   useEffect(() => {
     apiRequest<any>("/services/isp", { suppressToast: true }).then((response) => {
       const services = Array.isArray(response) ? response : (response?.data || [])
       const selected = services.find((item: any) => ["TSHUL", "NEPURIX"].includes(item?.service?.code) && item.isActive && item.isEnabled)
       if (!selected) return
       const code = selected.service.code
-      setAccountingProvision({ code, name: selected.service.name || code, requiresPan: selected.config?.is_pan_necessary ?? selected.config?.requiresPan ?? selected.config?.panRequired ?? code === "TSHUL" })
+      setAccountingProvision({
+        code,
+        name: selected.service.name || code,
+        requiresPan: selected.config?.is_pan_necessary ?? selected.config?.requiresPan ?? selected.config?.panRequired ?? code === "TSHUL",
+      })
     }).catch(() => undefined)
   }, [])
   const [documentUploadOpen, setDocumentUploadOpen] = useState(false)
@@ -1495,8 +1533,6 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
   const [radiusPasswordUser, setRadiusPasswordUser] = useState<{ id: number; username: string } | null>(null)
   const [newRadiusPassword, setNewRadiusPassword] = useState("")
   const [radiusPasswordSubmitting, setRadiusPasswordSubmitting] = useState(false)
-  const [oltFinderOpen, setOltFinderOpen] = useState(false)
-  const [selectedMacForOlt, setSelectedMacForOlt] = useState<string>("")
 
   const getFallbackPortalEmail = useCallback((cust: Customer | null) => {
     if (!cust) return ""
@@ -1557,7 +1593,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
   const findUltimateOltForSplitter = useCallback((splitterId: string): OLT | null => {
     if (!splitterId) return null
     const findRoot = (sId: string): Splitter | null => {
-      const splitter = splitters.find(s => s.id.toString() === sId)
+      const splitter = splitters.find(s => s.id.toString() === sId.toString())
       if (!splitter) return null
       if (!splitter.masterSplitterId) return splitter
       const parent = splitters.find(s => s.splitterId === splitter.masterSplitterId)
@@ -1566,12 +1602,12 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
     }
     const rootSplitter = findRoot(splitterId)
     if (!rootSplitter?.connectedServiceBoard) return null
-    return olts.find(o => o.id.toString() === rootSplitter.connectedServiceBoard?.oltId) || null
+    return olts.find(o => o.id.toString() === rootSplitter.connectedServiceBoard?.oltId?.toString()) || null
   }, [splitters, olts])
 
   const getSplitterPath = useCallback((splitterId: string): Splitter[] => {
     const path: Splitter[] = []
-    let current = splitters.find(s => s.id.toString() === splitterId)
+    let current = splitters.find(s => s.id.toString() === splitterId.toString())
     while (current) {
       path.unshift(current)
       if (!current.masterSplitterId) break
@@ -1607,25 +1643,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
   useEffect(() => {
     if (assignHardwareOpen) {
       fetchOltsAndSplitters()
-      const sd = customer?.serviceDetails?.[0]
-      if (sd) {
-        let selectedVlanIds: string[] = []
-        if (sd.vlanId) {
-          selectedVlanIds = sd.vlanId.split(',').filter(Boolean)
-        }
-        setHwProvisionDetails({
-          useSplitter: !!sd.splitterId,
-          useDirectOLT: !sd.splitterId,
-          oltId: sd.oltId?.toString() || "",
-          splitterId: sd.splitterId?.toString() || "",
-          splitterPort: sd.splitterPort || "",
-          oltPort: sd.oltPort || "",
-          selectedVlanIds,
-          selectedProfileIds: [],
-          loadOntConfig: false,
-          selectedLoadFileId: "",
-        })
-      } else {
+      if (hardwareDialogMode === "change-olt") {
         setHwProvisionDetails({
           useSplitter: true,
           useDirectOLT: false,
@@ -1638,8 +1656,44 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
           loadOntConfig: false,
           selectedLoadFileId: "",
         })
+      } else {
+        const sd = customer?.serviceDetails?.[0]
+        if (sd) {
+          let selectedVlanIds: string[] = []
+          if (sd.vlanId) {
+            selectedVlanIds = sd.vlanId.split(',').filter(Boolean)
+          }
+          setHwProvisionDetails({
+            useSplitter: !!sd.splitterId,
+            useDirectOLT: !sd.splitterId,
+            oltId: sd.oltId?.toString() || "",
+            splitterId: sd.splitterId?.toString() || "",
+            splitterPort: sd.splitterPort || "",
+            oltPort: sd.oltPort || "",
+            selectedVlanIds,
+            selectedProfileIds: [],
+            loadOntConfig: false,
+            selectedLoadFileId: "",
+          })
+        } else {
+          setHwProvisionDetails({
+            useSplitter: true,
+            useDirectOLT: false,
+            oltId: "",
+            splitterId: "",
+            splitterPort: "",
+            oltPort: "",
+            selectedVlanIds: [],
+            selectedProfileIds: [],
+            loadOntConfig: false,
+            selectedLoadFileId: "",
+          })
+        }
       }
-      const mappedDevices: CustomerDevice[] = (customer?.devices || []).map((dev) => ({
+      const dialogDevices = hardwareDialogMode === "change-olt"
+        ? (customer?.devices || []).filter((dev) => changeOltDeviceId ? (dev.id === changeOltDeviceId || String(dev.id) === String(changeOltDeviceId)) : dev.deviceType === "ONT")
+        : (customer?.devices || [])
+      const mappedDevices: CustomerDevice[] = dialogDevices.map((dev) => ({
         id: dev.id,
         deviceType: dev.deviceType,
         brand: dev.brand,
@@ -1654,6 +1708,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
       setSelectedDiscoveredOnt(null)
       setMatchedDeviceForOnt(null)
       setAutoFindError(null)
+      setDiscoveredOnts([])
     } else {
       setHwDevices([])
       setHwProvisionDetails({
@@ -1673,7 +1728,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
       setAutoFindError(null)
       setDiscoveredOnts([])
     }
-  }, [assignHardwareOpen, customer, fetchOltsAndSplitters])
+  }, [assignHardwareOpen, customer, fetchOltsAndSplitters, hardwareDialogMode, changeOltDeviceId])
 
   const openDeviceDialogForEdit = useCallback((index: number) => {
     setHwEditingDeviceIndex(index)
@@ -1698,32 +1753,183 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
   }, [hwEditingDeviceIndex])
 
   // Helper to convert a serial (e.g., "ALCLB2C804B0") to hex format ("414C434CB2C804B0")
-  const convertToPonHex = useCallback((serial: string): string => {
+  const convertToPonHex = useCallback((serial: string, brand?: string): string => {
     if (!serial) return ""
-    // If it's already all hex digits, return as is (upper case)
-    if (/^[0-9A-Fa-f]+$/.test(serial)) return serial.toUpperCase()
-    // First 4 chars are vendor ID, convert each to hex ASCII
-    const vendor = serial.slice(0, 4)
-    const rest = serial.slice(4)
-    const hexVendor = vendor.split('').map(ch => ch.charCodeAt(0).toString(16).toUpperCase()).join('')
-    return hexVendor + rest.toUpperCase()
+    const clean = serial.trim().toUpperCase().replace(/[^0-9A-Z]/g, '')
+    if (/^[0-9A-F]{16}$/.test(clean)) return clean
+    if (/^[A-Z]{4}[0-9A-F]{8}$/.test(clean) || (clean.length === 12 && /^[A-Z]{4}/.test(clean))) {
+      const vendor = clean.slice(0, 4)
+      const rest = clean.slice(4)
+      const hexVendor = vendor.split('').map(ch => ch.charCodeAt(0).toString(16).toUpperCase()).join('')
+      return hexVendor + rest
+    }
+    if (/^[0-9A-F]{8}$/.test(clean) && brand) {
+      const b = brand.toLowerCase()
+      let hexVendor = ""
+      if (b.includes("nokia") || b.includes("alcatel")) hexVendor = "414C434C"
+      else if (b.includes("huawei")) hexVendor = "48575443"
+      else if (b.includes("zte")) hexVendor = "5A544547"
+      else if (b.includes("vsol")) hexVendor = "56534F4C"
+      else if (b.includes("fiberhome")) hexVendor = "46485454"
+
+      if (hexVendor) return hexVendor + clean
+    }
+    return clean
   }, [])
 
   // Helper to get serial for OLT registration
-  const getOntSerialForRegistration = useCallback((device: CustomerDevice, isEpon: boolean): string => {
+  const getOntSerialForRegistration = useCallback((device: CustomerDevice, isEpon: boolean, selectedOnt?: any): string => {
     if (isEpon) {
-      // EPON: use MAC address without dots
-      return device.macAddress
-    } else {
-      // GPON: only encode the four-character vendor ID when inventory says it is included.
-      const ponSerial = device.ponSerial || device.serialNumber
-      return device.ponVendorIdIncluded === false ? ponSerial.toUpperCase() : convertToPonHex(ponSerial)
+      return (selectedOnt?.ont_id_details || device.macAddress || "").replace(/[^0-9A-Fa-f]/g, '').toLowerCase()
     }
+
+    if (selectedOnt?.ont_id_details) {
+      const formattedDiscovered = convertToPonHex(selectedOnt.ont_id_details, device.brand || device.model)
+      if (formattedDiscovered && formattedDiscovered.length === 16) {
+        return formattedDiscovered
+      }
+    }
+
+    const brand = device.brand || device.model
+    const hexFromSerial = convertToPonHex(device.serialNumber || "", brand)
+    const hexFromPon = convertToPonHex(device.ponSerial || "", brand)
+
+    if (hexFromSerial.length === 16) return hexFromSerial
+    if (hexFromPon.length === 16) return hexFromPon
+
+    return hexFromPon || hexFromSerial || device.ponSerial || device.serialNumber || ""
   }, [convertToPonHex])
+
+  // Delete ONT from OLT hardware and synchronized inventory
+  const deleteOntFromOlt = useCallback(async (serialNumber: string, targetOltId?: number | string): Promise<boolean> => {
+    if (!serialNumber) {
+      console.warn("Cannot delete ONT: serial number is missing")
+      return false
+    }
+    const oltId = targetOltId || customer?.serviceDetails?.[0]?.oltId || customer?.oltId
+    if (!oltId) {
+      console.warn("Cannot delete ONT: customer has no associated OLT")
+      return false
+    }
+    
+    try {
+      console.log(`[OLT_DELETE] Fetching ONT details for serial ${serialNumber} from OLT ${oltId}`)
+      const serialCandidates = [...new Set([
+        serialNumber, 
+        convertToPonHex(serialNumber),
+        normalizeIdentifier(serialNumber),
+      ].filter(Boolean))]
+      
+      let res: any = null
+      for (const candidate of serialCandidates) {
+        try {
+          const candidateResponse = await apiRequest<any>(`/olt/${oltId}/onts?search=${encodeURIComponent(candidate)}`)
+          if (candidateResponse?.success && Array.isArray(candidateResponse.data) && candidateResponse.data.length > 0) {
+            res = candidateResponse
+            break
+          }
+        } catch (searchErr) {
+          console.warn("[OLT_DELETE] Search onts error:", searchErr)
+        }
+      }
+
+      if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
+        const ont = res.data[0]
+        const fsp = ont.servicePort || ""
+        const ontIdVal = ont.ontId
+        const servicePorts = ont.ontDetails?.servicePorts
+
+        // Parse FSP (frame/slot/port)
+        const fspParts = fsp ? fsp.split('/') : []
+        const frame = fspParts.length > 0 ? parseInt(fspParts[0], 10) : 0
+        const slot = fspParts.length > 1 ? parseInt(fspParts[1], 10) : 0
+        const port = fspParts.length > 2 ? parseInt(fspParts[2], 10) : 0
+        const ont_id = parseInt(ontIdVal, 10)
+
+        let service_port_indices: number[] = []
+        if (servicePorts) {
+          try {
+            const ports = typeof servicePorts === 'string'
+              ? JSON.parse(servicePorts)
+              : servicePorts
+            if (Array.isArray(ports)) {
+              service_port_indices = ports
+                .map((sp: any) => Number(sp?.index ?? sp?.servicePortIndex ?? sp?.service_port))
+                .filter((v: any) => Number.isInteger(v) && v >= 0)
+            }
+          } catch (e) {
+            console.error("[OLT_DELETE] Error parsing service ports:", e)
+          }
+        }
+
+        const payload = {
+          action: "deleteOnt",
+          params: {
+            frame: isNaN(frame) ? 0 : frame,
+            slot: isNaN(slot) ? 0 : slot,
+            port: isNaN(port) ? 0 : port,
+            ont_id: isNaN(ont_id) ? undefined : ont_id,
+            serial: serialNumber,
+            service_port_indices
+          }
+        }
+
+        console.log(`[OLT_DELETE] Sending deleteOnt action to /device/${oltId}/action`, payload)
+        const actionRes = await apiRequest<any>(`/device/${oltId}/action`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+          headers: { "Content-Type": "application/json" }
+        })
+
+        if (actionRes?.success) {
+          console.log(`[OLT_DELETE] ONT ${serialNumber} deleted successfully from OLT ${oltId}`)
+          return true
+        } else {
+          console.warn("[OLT_DELETE] Action deleteOnt returned non-success:", actionRes?.error || actionRes?.message)
+          return false
+        }
+      } else {
+        // Fallback: Check if customer has an existing oltPort
+        const existingPort = customer?.serviceDetails?.[0]?.oltPort
+        if (existingPort) {
+          const parts = existingPort.split('/').map(Number)
+          if (parts.length >= 2 && !parts.some(isNaN)) {
+            const frame = parts.length === 3 ? parts[0] : 0
+            const slot = parts.length === 3 ? parts[1] : parts[0]
+            const port = parts.length === 3 ? parts[2] : parts[1]
+            try {
+              const fallbackRes = await apiRequest<any>(`/device/${oltId}/action`, {
+                method: "POST",
+                body: JSON.stringify({
+                  action: "deleteOnt",
+                  params: { frame, slot, port, serial: serialNumber }
+                }),
+                headers: { "Content-Type": "application/json" }
+              })
+              if (fallbackRes?.success) return true
+            } catch (fbErr) {
+              console.warn("[OLT_DELETE] Fallback deleteOnt error:", fbErr)
+            }
+          }
+        }
+        console.warn(`[OLT_DELETE] ONT ${serialNumber} was not found in synchronized inventory of OLT ${oltId}`)
+        return false
+      }
+    } catch (err: any) {
+      console.error("[OLT_DELETE] Failed to delete ONT from OLT:", err)
+      return false
+    }
+  }, [customer, convertToPonHex])
 
   // OLT Provisioning function
   const registerOntOnOlt = useCallback(async (): Promise<boolean> => {
-    if (!hwProvisionDetails.oltId) {
+    const selectedSplitter = hwProvisionDetails.splitterId ? splitters.find(s => s.id.toString() === hwProvisionDetails.splitterId.toString()) : null
+    const ultimateOlt = hwProvisionDetails.splitterId ? findUltimateOltForSplitter(hwProvisionDetails.splitterId) : null
+    const targetOltId = hwProvisionDetails.useSplitter
+      ? (ultimateOlt?.id?.toString() || hwProvisionDetails.oltId)
+      : hwProvisionDetails.oltId
+
+    if (!targetOltId) {
       toast.error("No OLT selected")
       return false
     }
@@ -1732,7 +1938,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
       return false
     }
 
-    const selectedOlt = olts.find(o => o.id.toString() === hwProvisionDetails.oltId)
+    const selectedOlt = olts.find(o => o.id.toString() === targetOltId.toString())
     if (!selectedOlt) {
       toast.error("Please select a valid OLT")
       return false
@@ -1742,7 +1948,6 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
     let boardType = selectedOlt.serviceBoards?.[0]?.type
 
     if (hwProvisionDetails.useSplitter) {
-      const ultimateOlt = findUltimateOltForSplitter(hwProvisionDetails.splitterId)
       if (!ultimateOlt) {
         toast.error("Could not determine OLT from selected splitter")
         return false
@@ -1750,7 +1955,6 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
 
       const path = getSplitterPath(hwProvisionDetails.splitterId)
       boardPortStr = resolveSplitterBoardPort(path)
-      const selectedSplitter = splitters.find(s => s.id.toString() === hwProvisionDetails.splitterId)
       boardType = selectedSplitter?.connectedServiceBoard?.boardType || ultimateOlt.serviceBoards?.[0]?.type
     }
 
@@ -1765,7 +1969,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
     const isEpon = !!boardType?.toUpperCase().includes("EPON")
 
     // Build serial
-    const serial = getOntSerialForRegistration(matchedDeviceForOnt, isEpon)
+    const serial = getOntSerialForRegistration(matchedDeviceForOnt, isEpon, selectedDiscoveredOnt)
     if (!serial) {
       toast.error("No serial/MAC available for ONT")
       return false
@@ -1820,7 +2024,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
     }
 
     try {
-      const response = await apiRequest<any>(`/device/${hwProvisionDetails.oltId}/action`, {
+      const response = await apiRequest<any>(`/device/${targetOltId}/action`, {
         method: "POST",
         body: JSON.stringify(payload),
         headers: { "Content-Type": "application/json" },
@@ -1829,18 +2033,136 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
         toast.success("ONT registered on OLT successfully")
         return true
       } else {
-        toast.error(response?.error || "Failed to register ONT")
+        toast.error(response?.error || response?.message || "Server error. The ONT could not be registered.")
         return false
       }
     } catch (error: any) {
-      toast.error(error?.message || "Error")
+      toast.error(error?.message || "Error registering ONT on OLT")
       return false
     }
   }, [hwProvisionDetails, matchedDeviceForOnt, selectedDiscoveredOnt, findUltimateOltForSplitter, getSplitterPath, splitters, olts, customer, getOntSerialForRegistration])
 
+  const handleSelectDiscoveredOnt = useCallback((ontId: string, customOntList?: any[]) => {
+    const list = customOntList || discoveredOnts
+    const ont = list.find(o => o.ont_id_details === ontId)
+    setSelectedDiscoveredOnt(ont || null)
+
+    if (!ont) {
+      setMatchedDeviceForOnt(null)
+      return
+    }
+
+    const availableDevices = hwDevices.length > 0 ? hwDevices : (customer?.devices || [])
+    if (!availableDevices.length) {
+      setMatchedDeviceForOnt(null)
+      toast.error("No customer devices available for matching.")
+      return
+    }
+
+    const selectedSplitter = hwProvisionDetails.splitterId ? splitters.find(s => s.id.toString() === hwProvisionDetails.splitterId.toString()) : null
+    const ultimateOlt = hwProvisionDetails.splitterId ? findUltimateOltForSplitter(hwProvisionDetails.splitterId) : null
+    const boardType = selectedSplitter?.connectedServiceBoard?.boardType || ultimateOlt?.serviceBoards?.[0]?.type
+    const isEpon = !!boardType?.toUpperCase().includes("EPON")
+
+    const ontIdentifier = String(ont.ont_id_details || "").trim()
+    const normalizedOnt = normalizeIdentifier(ontIdentifier)
+
+    // Try to match with existing ONT device
+    for (const device of availableDevices) {
+      if (device.deviceType !== "ONT") continue
+
+      const devSerial = String(device.serialNumber || "").trim()
+      const devPon = String(device.ponSerial || "").trim()
+      const devMac = String(device.macAddress || "").trim()
+
+      const devSerialHex = convertToPonHex(devSerial, device.brand || device.model)
+      const devPonHex = convertToPonHex(devPon, device.brand || device.model)
+
+      const candidateStrings = [
+        devSerial,
+        devPon,
+        devMac,
+        devSerialHex,
+        devPonHex,
+      ].filter(Boolean)
+
+      // 1. Direct case-insensitive match
+      if (candidateStrings.some(c => c.toLowerCase() === ontIdentifier.toLowerCase())) {
+        setMatchedDeviceForOnt(device)
+        setSelectedDiscoveredOnt((prev: any) => prev ? ({ ...prev, ont_id: ont.ont_id }) : null)
+        toast.success(`Matched with device: ${device.brand || ""} ${device.model || ""}`)
+        return
+      }
+
+      // 2. Normalized hex match
+      const candidateNormalized = candidateStrings.map(normalizeIdentifier).filter(Boolean)
+      if (candidateNormalized.includes(normalizedOnt)) {
+        setMatchedDeviceForOnt(device)
+        setSelectedDiscoveredOnt((prev: any) => prev ? ({ ...prev, ont_id: ont.ont_id }) : null)
+        toast.success(`Matched with device: ${device.brand || ""} ${device.model || ""}`)
+        return
+      }
+
+      // 3. EPON MAC match
+      if (isEpon) {
+        const normMac = normalizeIdentifier(devMac)
+        if (normMac && normMac === normalizedOnt) {
+          setMatchedDeviceForOnt(device)
+          setSelectedDiscoveredOnt((prev: any) => prev ? ({ ...prev, ont_id: ont.ont_id }) : null)
+          toast.success(`Matched with device: ${device.brand || ""} ${device.model || ""}`)
+          return
+        }
+      }
+
+      // 4. GPON Hex match
+      if (devPonHex && devPonHex.toLowerCase() === ontIdentifier.toLowerCase()) {
+        setMatchedDeviceForOnt(device)
+        setSelectedDiscoveredOnt((prev: any) => prev ? ({ ...prev, ont_id: ont.ont_id }) : null)
+        toast.success(`Matched with device: ${device.brand || ""} ${device.model || ""}`)
+        return
+      }
+      if (devSerialHex && devSerialHex.toLowerCase() === ontIdentifier.toLowerCase()) {
+        setMatchedDeviceForOnt(device)
+        setSelectedDiscoveredOnt((prev: any) => prev ? ({ ...prev, ont_id: ont.ont_id }) : null)
+        toast.success(`Matched with device: ${device.brand || ""} ${device.model || ""}`)
+        return
+      }
+
+      // 5. Suffix match (e.g. last 8 hex digits if vendor prefix matches)
+      if (normalizedOnt.length === 16 && (devSerialHex.length === 16 || devPonHex.length === 16)) {
+        const hex = devPonHex.length === 16 ? devPonHex : devSerialHex
+        if (hex.slice(-8).toLowerCase() === normalizedOnt.slice(-8).toLowerCase()) {
+          setMatchedDeviceForOnt(device)
+          setSelectedDiscoveredOnt((prev: any) => prev ? ({ ...prev, ont_id: ont.ont_id }) : null)
+          toast.success(`Matched with device: ${device.brand || ""} ${device.model || ""}`)
+          return
+        }
+      }
+    }
+
+    // In change-olt mode, if there is only 1 ONT device in availableDevices, match it
+    if (hardwareDialogMode === "change-olt" && availableDevices.length === 1 && availableDevices[0].deviceType === "ONT") {
+      const dev = availableDevices[0]
+      setMatchedDeviceForOnt(dev)
+      setSelectedDiscoveredOnt((prev: any) => prev ? ({ ...prev, ont_id: ont.ont_id }) : null)
+      toast.success(`Selected ONT matched with existing device: ${dev.brand || ""} ${dev.model || ""}`)
+      return
+    }
+
+    // No match found
+    setMatchedDeviceForOnt(null)
+    toast.error("No matching device found for selected ONT")
+  }, [hwDevices, customer, hwProvisionDetails.splitterId, splitters, findUltimateOltForSplitter, discoveredOnts, convertToPonHex, hardwareDialogMode, toast])
+
   const handleAutoFindOnt = useCallback(async () => {
-    if (!hwProvisionDetails.oltId) {
-      toast.error("Please select an OLT first")
+    const selectedSplitter = hwProvisionDetails.splitterId ? splitters.find(s => s.id.toString() === hwProvisionDetails.splitterId.toString()) : null
+    const ultimateOlt = hwProvisionDetails.splitterId ? findUltimateOltForSplitter(hwProvisionDetails.splitterId) : null
+    const targetOltId = hwProvisionDetails.useSplitter 
+      ? (ultimateOlt?.id?.toString() || hwProvisionDetails.oltId) 
+      : hwProvisionDetails.oltId
+
+    if (!targetOltId) {
+      toast.error(hwProvisionDetails.useSplitter ? "Please select a splitter first" : "Please select an OLT first")
       return
     }
 
@@ -1852,19 +2174,17 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
         return
       }
 
-      const selectedSplitter = splitters.find(s => s.id.toString() === hwProvisionDetails.splitterId)
-      const ultimateOlt = findUltimateOltForSplitter(hwProvisionDetails.splitterId)
       const path = getSplitterPath(hwProvisionDetails.splitterId)
       const boardPortStr = resolveSplitterBoardPort(path)
 
       if (!boardPortStr) {
-        toast.error("Unable to determine board port from splitter")
+        toast.error("Unable to determine board port from splitter hierarchy. Please ensure the root splitter is connected to an OLT service board.")
         return
       }
 
       const parts = boardPortStr.split('/').map(Number)
       if (parts.length !== 3 || parts.some(isNaN)) {
-        toast.error(`Invalid board port format from splitter: ${boardPortStr}`)
+        toast.error(`Invalid board port format from splitter: ${boardPortStr}. Expected frame/slot/port.`)
         return
       }
       [frame, slot, port] = parts
@@ -1889,7 +2209,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
     setMatchedDeviceForOnt(null)
 
     try {
-      const response = await apiRequest<any>(`/device/${hwProvisionDetails.oltId}/action`, {
+      const response = await apiRequest<any>(`/device/${targetOltId}/action`, {
         method: "POST",
         body: JSON.stringify({
           action: "autofind",
@@ -1900,6 +2220,12 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
 
       if (response?.success && response.data) {
         setDiscoveredOnts(response.data)
+        if (response.data.length === 0) {
+          setAutoFindError("No unconfigured ONTs found on this PON port.")
+        } else if (response.data.length === 1) {
+          // If only 1 discovered ONT, automatically match/select it
+          handleSelectDiscoveredOnt(response.data[0].ont_id_details, response.data)
+        }
       } else {
         setAutoFindError(response?.error || "Failed to discover ONTs")
       }
@@ -1908,78 +2234,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
     } finally {
       setIsAutoFinding(false)
     }
-  }, [hwProvisionDetails, splitters, findUltimateOltForSplitter, getSplitterPath, toast])
-
-  const handleSelectDiscoveredOnt = useCallback((ontId: string) => {
-    const ont = discoveredOnts.find(o => o.ont_id_details === ontId)
-    setSelectedDiscoveredOnt(ont || null)
-
-    if (!ont) {
-      setMatchedDeviceForOnt(null)
-      return
-    }
-
-    if (!hwDevices.length) {
-      setMatchedDeviceForOnt(null)
-      toast.error("No devices added. Please add a device first.")
-      return
-    }
-
-    const selectedSplitter = splitters.find(s => s.id.toString() === hwProvisionDetails.splitterId)
-    const ultimateOlt = findUltimateOltForSplitter(hwProvisionDetails.splitterId)
-    const boardType = selectedSplitter?.connectedServiceBoard?.boardType || ultimateOlt?.serviceBoards?.[0]?.type
-    const isEpon = boardType?.toUpperCase().includes("EPON")
-
-    const ontIdentifier = ont.ont_id_details  // e.g., "414C434CB2C804B0" for GPON
-    const normalizedOnt = normalizeIdentifier(ontIdentifier)
-
-    // Try to match with any added ONT device
-    for (const device of hwDevices) {
-      if (device.deviceType !== "ONT") continue
-
-      const candidateIdentifiers = [
-        device.macAddress,
-        device.serialNumber,
-        device.ponSerial,
-        convertToPonHex(device.serialNumber || ""),
-        convertToPonHex(device.ponSerial || ""),
-      ]
-        .map(normalizeIdentifier)
-        .filter(Boolean)
-
-      if (candidateIdentifiers.includes(normalizedOnt)) {
-        setMatchedDeviceForOnt(device)
-        setSelectedDiscoveredOnt((prev: any) => prev ? ({ ...prev, ont_id: ont.ont_id }) : null)
-        toast.success(`Matched with device: ${device.brand} ${device.model}`)
-        return
-      }
-
-      if (isEpon) {
-        // EPON: match by MAC
-        const normalizedMac = normalizeIdentifier(device.macAddress)
-        if (normalizedMac && normalizedMac === normalizedOnt) {
-          setMatchedDeviceForOnt(device)
-          setSelectedDiscoveredOnt((prev: any) => prev ? ({ ...prev, ont_id: ont.ont_id }) : null)
-          toast.success(`Matched with device: ${device.brand} ${device.model}`)
-          return
-        }
-      } else {
-        // GPON: match by serialNumber or ponSerial after converting to hex
-        const deviceSerialHex = convertToPonHex(device.serialNumber || "")
-        const devicePonHex = convertToPonHex(device.ponSerial || "")
-        if ((devicePonHex && devicePonHex === ontIdentifier) || (deviceSerialHex && deviceSerialHex === ontIdentifier)) {
-          setMatchedDeviceForOnt(device)
-          setSelectedDiscoveredOnt((prev: any) => prev ? ({ ...prev, ont_id: ont.ont_id }) : null)
-          toast.success(`Matched with device: ${device.brand} ${device.model}`)
-          return
-        }
-      }
-    }
-
-    // No match found
-    setMatchedDeviceForOnt(null)
-    toast.error("No matching device found")
-  }, [hwDevices, hwProvisionDetails.splitterId, splitters, findUltimateOltForSplitter, discoveredOnts, convertToPonHex, toast])
+  }, [hwProvisionDetails, splitters, findUltimateOltForSplitter, getSplitterPath, handleSelectDiscoveredOnt, toast])
 
   const handleHwProvisionSave = async () => {
     if (!customer) return
@@ -1990,7 +2245,105 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
         ? findUltimateOltForSplitter(hwProvisionDetails.splitterId)
         : selectedOlt
 
-      // Step 1: Register ONT on OLT (if fiber, and discovery/matching is set)
+      const currentServiceOltId = customer?.serviceDetails?.[0]?.oltId
+      const newOltId = ultimateOlt?.id || hwProvisionDetails.oltId ? Number(ultimateOlt?.id || hwProvisionDetails.oltId) : null
+
+      if (hardwareDialogMode === "change-olt") {
+        if (!newOltId) {
+          toast.error("Please select a target OLT or Splitter")
+          setHwProvisionLoading(false)
+          return
+        }
+
+        const targetDevice = matchedDeviceForOnt || hwDevices.find(d => d.deviceType === "ONT") || customer?.devices?.find(d => d.id === changeOltDeviceId || d.deviceType === "ONT")
+        if (!targetDevice) {
+          toast.error("No existing ONT device found to move")
+          setHwProvisionLoading(false)
+          return
+        }
+
+        if (!selectedDiscoveredOnt || !matchedDeviceForOnt) {
+          toast.error("Please run Autofind ONT and select the discovered device to match")
+          setHwProvisionLoading(false)
+          return
+        }
+
+        // Step 1: Delete/Unregister ONT from previous OLT / PON port
+        if (currentServiceOltId) {
+          const ontSerialToDelete = targetDevice.ponSerial || targetDevice.serialNumber || targetDevice.macAddress
+          if (ontSerialToDelete) {
+            toast.loading("Unregistering ONT from previous OLT...", { id: "olt-change-progress" })
+            try {
+              const deleted = await deleteOntFromOlt(ontSerialToDelete, currentServiceOltId)
+              if (deleted) {
+                toast.success("Unregistered ONT from previous OLT", { id: "olt-change-progress" })
+              } else {
+                toast.info("Previous OLT registration cleared / not found", { id: "olt-change-progress" })
+              }
+            } catch (delErr: any) {
+              console.warn("Delete ONT from previous OLT warning:", delErr)
+            }
+          }
+        }
+
+        // Step 2: Register ONT on the new OLT / PON port
+        toast.loading("Registering ONT on new OLT / PON port...", { id: "olt-change-progress" })
+        const ontRegistered = await registerOntOnOlt()
+        if (!ontRegistered) {
+          setHwProvisionLoading(false)
+          return
+        }
+
+        // Step 3: Save connection details to customer in database
+        const vlanIdStr = hwProvisionDetails.selectedVlanIds.join(',')
+        let newOltPort = hwProvisionDetails.oltPort || null
+        if (hwProvisionDetails.useSplitter && hwProvisionDetails.splitterId) {
+          const path = getSplitterPath(hwProvisionDetails.splitterId)
+          newOltPort = resolveSplitterBoardPort(path) || hwProvisionDetails.oltPort || null
+        }
+
+        await apiRequest(`/customer/${customer.id}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            connectionType: "fiber",
+            oltId: newOltId,
+            splitterId: hwProvisionDetails.splitterId ? Number(hwProvisionDetails.splitterId) : null,
+            oltPort: newOltPort,
+            splitterPort: hwProvisionDetails.splitterPort || null,
+            vlanId: vlanIdStr,
+          }),
+          headers: { "Content-Type": "application/json" },
+        })
+
+        // Step 4: Ensure the existing ONT device provisioning status is active
+        if (targetDevice.id) {
+          await apiRequest(`/customer/${customer.id}/devices/${targetDevice.id}`, {
+            method: "PUT",
+            body: JSON.stringify({
+              provisioningStatus: "active",
+            }),
+            headers: { "Content-Type": "application/json" }
+          })
+        }
+
+        // Step 5: Sync new OLT & TR-069
+        const syncOltId = String(newOltId)
+        const syncPromises: Promise<any>[] = [
+          apiRequest("/tr069-devices/sync", { method: "POST" }),
+          apiRequest(`/olt/${syncOltId}/onts/sync`, { method: "POST" }),
+        ]
+        if (currentServiceOltId && String(currentServiceOltId) !== syncOltId) {
+          syncPromises.push(apiRequest(`/olt/${currentServiceOltId}/onts/sync`, { method: "POST" }))
+        }
+        await Promise.allSettled(syncPromises)
+
+        toast.success("ONT successfully moved to new OLT / PON port!", { id: "olt-change-progress" })
+        setAssignHardwareOpen(false)
+        fetchCustomerData()
+        return
+      }
+
+      // --- ADD HARDWARE MODE (Existing logic) ---
       if (selectedDiscoveredOnt && matchedDeviceForOnt) {
         const ontRegistered = await registerOntOnOlt()
         if (!ontRegistered) {
@@ -1999,34 +2352,34 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
         }
       }
 
-      // Step 2: Save connection details to customer
-      // vlanId field needs to be a comma-separated string of the selected VLAN IDs (database IDs)
       const vlanIdStr = hwProvisionDetails.selectedVlanIds.join(',')
+      let newOltPort = hwProvisionDetails.oltPort || null
+      if (hwProvisionDetails.useSplitter && hwProvisionDetails.splitterId) {
+        const path = getSplitterPath(hwProvisionDetails.splitterId)
+        newOltPort = resolveSplitterBoardPort(path) || hwProvisionDetails.oltPort || null
+      }
 
       await apiRequest(`/customer/${customer.id}`, {
         method: "PUT",
         body: JSON.stringify({
           connectionType: "fiber",
-          oltId: ultimateOlt?.id || hwProvisionDetails.oltId ? Number(ultimateOlt?.id || hwProvisionDetails.oltId) : null,
+          oltId: newOltId,
           splitterId: hwProvisionDetails.splitterId ? Number(hwProvisionDetails.splitterId) : null,
-          oltPort: hwProvisionDetails.oltPort || null,
+          oltPort: newOltPort,
           splitterPort: hwProvisionDetails.splitterPort || null,
           vlanId: vlanIdStr,
         }),
         headers: { "Content-Type": "application/json" },
       })
 
-      // Step 3: Assign new devices to customer
       const newDevices = hwDevices.filter(d => !d.id && d.inventoryItemId)
       for (const dev of newDevices) {
-        await apiRequest(`/inventory/${dev.inventoryItemId}/assign-customer`, {
+        await apiRequest(`/inventory/${dev.inventoryItemId}/assign`, {
           method: "PUT",
           body: JSON.stringify({ customerId: customer.id })
         })
       }
 
-      // Step 3.5: Activate ONT Devices in database
-      // Fetch fresh customer details to get IDs of newly assigned devices
       const freshData = await apiRequest<any>(`/customer/${customer.id}`)
       if (freshData) {
         const freshDevices = freshData.devices || []
@@ -2040,7 +2393,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
         }
       }
 
-      const syncOltId = String(ultimateOlt?.id || hwProvisionDetails.oltId || "")
+      const syncOltId = String(newOltId || "")
       if (syncOltId) {
         const syncResults = await Promise.allSettled([
           apiRequest("/tr069-devices/sync", { method: "POST" }),
@@ -2141,8 +2494,8 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
     if (!selectedHardwareId) return;
     setActionLoading(true)
     try {
-      await apiRequest(`/inventory/${selectedHardwareId}/assign-customer`, {
-        method: "PUT",
+      await apiRequest(`/inventory/${selectedHardwareId}/assign`, {
+        method: "POST",
         body: JSON.stringify({ customerId: customer?.id })
       })
       toast.success("Hardware assigned successfully")
@@ -2207,6 +2560,21 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
       toast.error(error.message || "Failed to synchronize ACS device")
     } finally {
       setAcsSyncing(false)
+    }
+  }
+
+  const handleRebootAcsDevice = async () => {
+    const serial = rebootDevice?.serialNumber
+    if (!serial) return
+    setRebootingSerial(serial)
+    try {
+      await apiRequest(`/services/genieacs/devices/${encodeURIComponent(serial)}/reboot`, { method: "POST" })
+      toast.success("Reboot command sent to the device")
+    } catch (error: any) {
+      toast.error(error.message || "Failed to reboot device")
+    } finally {
+      setRebootingSerial(null)
+      setRebootDevice(null)
     }
   }
 
@@ -2400,7 +2768,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
   }
 
   const handleForceNettvPassword = async () => {
-    const username = nettvDetails?.subscriber?.username || customer?.customerUniqueId;
+    const username = nettvDetails?.subscriber?.username || getLinkedNettvUsername(customer);
     if (!username) {
       toast.error("Subscriber username not found.");
       return;
@@ -2440,13 +2808,15 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
   useEffect(() => {
     const fetchPackages = async () => {
       try {
-        const data = await apiRequest<PackageOption[]>('/package-price?active=true')
+        const data = await apiRequest<PackageOption[]>(`/package-price?active=true&customerId=${customer?.id}`)
         if (data) {
           setPackages(data)
           if (data.length > 0 && customer) {
-            setSelectedPackage(customer.subscribedPkgId.toString())
             const current = data.find(pkg => String(pkg.id) === String(customer.subscribedPkgId))
+            setSelectedPackage(current ? String(current.id) : "")
             setSelectedPlanName(current?.packagePlanDetails?.planName || "")
+            setRenewPlanId(current ? String(current.planId) : "")
+            setRenewPackageId(current ? String(current.id) : "")
           }
         }
       } catch (error) {
@@ -2454,7 +2824,19 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
       }
     }
     if (customer) fetchPackages()
-  }, [customer])
+  }, [customer?.id, customer?.subscribedPkgId, customer?.branchId, customer?.subBranchId])
+
+  useEffect(() => {
+    if (!renewPackageOpen) return
+    Promise.all([
+      apiRequest<any[]>("/billing/fiscal-years"),
+      apiRequest<any[]>("/billing/payment-methods?enabled=true")
+    ]).then(([years, methods]) => {
+      setRenewFiscalYearId(String((years || []).find(year => year.isActive)?.id || ""))
+      setRenewPaymentMethods(methods || [])
+      setRenewPaymentMethodId(String((methods || []).find(method => method.isDefault)?.id || methods?.[0]?.id || ""))
+    }).catch(() => toast.error("Failed to load billing options"))
+  }, [renewPackageOpen])
 
   useEffect(() => {
     if (customer?.customerUniqueId) {
@@ -2481,12 +2863,12 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
   }, [customer?.customerUniqueId])
 
   useEffect(() => {
-    if (customer?.customerUniqueId) {
+    if (customer) {
+      const linkedUsername = getLinkedNettvUsername(customer)
       const nettvIsProvisioned = Boolean(customer.subscribedApps?.some((app) => {
         const serviceCode = String(app.service?.code || "").toUpperCase()
         const serviceName = String(app.service?.name || "").toUpperCase()
-        const status = String(app.status || "").toLowerCase()
-        return status === "active" && (serviceCode === "NETTV" || serviceName.includes("NETTV"))
+        return serviceCode === "NETTV" || serviceName.includes("NETTV")
       }))
 
       if (!nettvIsProvisioned) {
@@ -2495,17 +2877,25 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
         setLoadingNettv(false)
         return
       }
+      if (!linkedUsername) {
+        setNettvDetails(null)
+        setNettvMessage("NetTV is marked provisioned but no subscriber username is linked. Reprovision NetTV to link it.")
+        setLoadingNettv(false)
+        return
+      }
 
       const fetchNettv = async () => {
         setLoadingNettv(true)
         try {
-          const res = await apiRequest(`/services/nettv/subscribers/${customer.customerUniqueId}`)
+          const res = await apiRequest(`/services/nettv/subscribers/${encodeURIComponent(linkedUsername)}`)
           if (res.configured === false) {
             setNettvDetails(null)
             setNettvMessage(res.message || "NetTV service is not configured.")
           } else if (res.success) {
             setNettvDetails(res.data)
             setNettvMessage("")
+            const ordersResponse = await ServicesAPI.getNetTVOrders(1, 100, linkedUsername).catch(() => null)
+            setNettvOrders(unwrapCustomerNettvList(ordersResponse?.data))
           }
         } catch (error: any) {
           setNettvDetails(null)
@@ -2516,7 +2906,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
       }
       fetchNettv()
     }
-  }, [customer?.customerUniqueId, customer?.subscribedApps])
+  }, [customer])
 
     const toggleSetting = (setting: keyof typeof networkSettings) => {
     setNetworkSettings((prev) => ({ ...prev, [setting]: !prev[setting] }))
@@ -2530,11 +2920,14 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
       const res = await apiRequest(`/customer/${customer.id}/sync/nettv`, { method: "POST" })
       if (res.success) {
         toast.success("NetTV subscriber details synchronized successfully!")
-        if (customer.customerUniqueId) {
-          const fetchRes = await apiRequest(`/services/nettv/subscribers/${customer.customerUniqueId}`)
+        const linkedUsername = String(res.data?.username || getLinkedNettvUsername(customer)).trim()
+        if (linkedUsername) {
+          const fetchRes = await apiRequest(`/services/nettv/subscribers/${encodeURIComponent(linkedUsername)}`)
           if (fetchRes.success) {
             setNettvDetails(fetchRes.data)
             setNettvMessage("")
+            const ordersResponse = await ServicesAPI.getNetTVOrders(1, 100, linkedUsername).catch(() => null)
+            setNettvOrders(unwrapCustomerNettvList(ordersResponse?.data))
           }
         }
       } else {
@@ -2650,12 +3043,25 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
   }
 
   const handleRenewPackage = async () => {
+    const pkg = packages.find(item => String(item.id) === renewPackageId && String(item.planId) === renewPlanId)
+    if (!pkg) return toast.error("Select a plan and period")
+    if (!renewFiscalYearId) return toast.error("No active fiscal year is available")
+    if (!renewPaymentMethodId) return toast.error("Select a payment method")
     try {
       setRenewLoading(true)
 
-      const response = await apiRequest("/customer/subscribe", {
+      await apiRequest("/billing/renew", {
         method: 'POST',
-        body: JSON.stringify({ customerId: parseInt(customerId), createOrder: true }),
+        body: JSON.stringify({
+          customerId: Number(customerId),
+          packageId: pkg.id,
+          invoiceId: renewReceipt.trim(),
+          fiscalYearId: Number(renewFiscalYearId),
+          paymentMethodId: Number(renewPaymentMethodId),
+          amount: customer?.isFree ? 0 : customer?.isRechargeable
+            ? (pkg.renewAmountWithTax ?? pkg.price)
+            : (pkg.initialTotalWithTax ?? pkg.price)
+        }),
         headers: {
           'Content-Type': 'application/json',
         }
@@ -2669,6 +3075,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
       }
 
       setRenewPackageOpen(false)
+      setRenewReceipt("")
     } catch (error: any) {
       console.error("Error renewing package:", error)
       toast.error(error.message || "Failed to renew package")
@@ -2775,7 +3182,6 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
 
   const handleReprovisionNettv = async (nettvData: any) => {
     try {
-      const wasAlreadyLinked = Boolean(getLinkedNettvUsername(customer))
       setServiceActionLoading("nettv")
       const response = await apiRequest<{ success: boolean; message: string }>(`/customer/${customerId}/reprovision/nettv`, {
         method: 'POST',
@@ -2785,10 +3191,8 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
       if (response.success) {
         toast.success(response.message || "NetTV reprovisioned successfully")
         await fetchCustomerData()
-        if (!wasAlreadyLinked && !nettvData?.provisioning?.stb?.serial) {
-          toast.success("Subscriber created. Select the customer's STB and subscription package to complete NetTV provisioning.")
-          setNettvProvisionOpen(true)
-        }
+        setNettvProvisionUsername(buildNettvCredential(nettvData?.username || getLinkedNettvUsername(customer) || customer.connectionUsers?.[0]?.username || customer.customerUniqueId))
+        setNettvDeviceOrderOpen(true)
       } else {
         toast.error("NetTV reprovisioning failed")
       }
@@ -2870,89 +3274,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
     }
   }
 
-  const deleteOntFromOlt = async (serialNumber: string) => {
-    if (!serialNumber) throw new Error("Cannot delete ONT: serial number is missing");
-    const oltId = customer?.serviceDetails?.[0]?.oltId || customer?.oltId;
-    if (!oltId) {
-      throw new Error("Cannot delete ONT: customer has no associated OLT");
-    }
-    
-    try {
-      console.log(`[OLT_DELETE] Fetching ONT details for serial ${serialNumber} from OLT ${oltId}`);
-      const serialCandidates = [...new Set([serialNumber, convertToPonHex(serialNumber)].filter(Boolean))]
-      let res: any = null
-      for (const candidate of serialCandidates) {
-        const candidateResponse = await apiRequest<any>(`/olt/${oltId}/onts?search=${encodeURIComponent(candidate)}`)
-        if (candidateResponse?.success && Array.isArray(candidateResponse.data) && candidateResponse.data.length > 0) {
-          res = candidateResponse
-          break
-        }
-      }
-      if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
-        const ont = res.data[0];
-        const fsp = ont.servicePort || ""; 
-        const ontIdVal = ont.ontId;
-        const servicePorts = ont.ontDetails?.servicePorts;
 
-        // Parse FSP (frame/slot/port)
-        const fspParts = fsp ? fsp.split('/') : [];
-        const frame = fspParts.length > 0 ? parseInt(fspParts[0], 10) : 0;
-        const slot = fspParts.length > 1 ? parseInt(fspParts[1], 10) : 0;
-        const port = fspParts.length > 2 ? parseInt(fspParts[2], 10) : 0;
-        const ont_id = parseInt(ontIdVal, 10);
-
-        if (isNaN(frame) || isNaN(slot) || isNaN(port) || isNaN(ont_id)) {
-          throw new Error(`Cannot delete ONT: invalid F/S/P or ONT ID (${fsp}, ${ontIdVal})`);
-        }
-
-        let service_port_indices: number[] = [];
-        if (servicePorts) {
-          try {
-            const ports = typeof servicePorts === 'string'
-              ? JSON.parse(servicePorts)
-              : servicePorts;
-            if (Array.isArray(ports)) {
-              service_port_indices = ports
-                .map((sp: any) => Number(sp?.index ?? sp?.servicePortIndex ?? sp?.service_port))
-                .filter((v: any) => Number.isInteger(v) && v >= 0);
-            }
-          } catch (e) {
-            console.error("[OLT_DELETE] Error parsing service ports:", e);
-          }
-        }
-
-        const payload = {
-          action: "deleteOnt",
-          params: {
-            frame,
-            slot,
-            port,
-            ont_id,
-            serial: serialNumber,
-            service_port_indices
-          }
-        };
-
-        console.log(`[OLT_DELETE] Sending deleteOnt action to /device/${oltId}/action`, payload);
-        const actionRes = await apiRequest<any>(`/device/${oltId}/action`, {
-          method: "POST",
-          body: JSON.stringify(payload),
-          headers: { "Content-Type": "application/json" }
-        });
-
-        if (actionRes?.success) {
-          toast.success("ONT deleted from OLT successfully");
-        } else {
-          throw new Error(actionRes?.error || actionRes?.message || "ONT deletion from OLT returned failure status.");
-        }
-      } else {
-        throw new Error(`Cannot delete ONT: ${serialNumber} was not found in synchronized OLT inventory`);
-      }
-    } catch (err: any) {
-      console.error("[OLT_DELETE] Failed to delete ONT from OLT:", err);
-      throw err;
-    }
-  };
 
   const confirmReturnHardware = async (note: string, isFaulty: boolean) => {
     if (!returnHardwareItem) return
@@ -3094,19 +3416,17 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
     return rawPicture ? buildApiAssetUrl(rawPicture) : ""
   }
 
-  const getStatusBadge = (status: string = "") => {
-    const statusLower = String(status || "").toLowerCase()
+  const getStatusBadge = (status: string) => {
+    const statusLower = status.toLowerCase()
     switch (statusLower) {
       case "active":
-        return <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold border-0 shadow-sm px-2.5 py-0.5">ACTIVE</Badge>
+        return <Badge className="bg-gradient-to-r from-green-500 to-emerald-600 text-white border-0">ACTIVE</Badge>
       case "suspended":
-        return <Badge className="bg-amber-600 hover:bg-amber-700 text-white font-bold border-0 shadow-sm px-2.5 py-0.5">SUSPENDED</Badge>
+        return <Badge className="bg-gradient-to-r from-amber-500 to-orange-600 text-white border-0">SUSPENDED</Badge>
       case "inactive":
-      case "disabled":
-      case "expired":
-        return <Badge className="bg-red-600 hover:bg-red-700 text-white font-bold border-0 shadow-sm px-2.5 py-0.5">INACTIVE</Badge>
+        return <Badge className="bg-gradient-to-r from-red-500 to-rose-600 text-white border-0">INACTIVE</Badge>
       default:
-        return <Badge className="bg-slate-700 hover:bg-slate-800 text-white font-bold border-0 shadow-sm px-2.5 py-0.5">{status.toUpperCase() || "INACTIVE"}</Badge>
+        return <Badge className="bg-gradient-to-r from-gray-500 to-gray-600 text-white border-0">{status.toUpperCase()}</Badge>
     }
   }
 
@@ -3204,6 +3524,40 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
     )
   }
 
+  const markProvisioningComplete = async () => {
+    setProvisioningStatusSaving(true)
+    try {
+      const response = await apiRequest<{ success: boolean; message?: string }>(`/customer/${customerId}/provisioning-status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "active" })
+      })
+      toast.success(response.message || "Customer provisioning marked complete")
+      await fetchCustomerData()
+    } catch (error: any) {
+      toast.error(error.message || "Failed to update provisioning status")
+    } finally {
+      setProvisioningStatusSaving(false)
+    }
+  }
+
+  if (isFieldStaff) {
+    const ontDevices = (customer.devices || []).filter(device => device.deviceType === "ONT" && device.serialNumber)
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div><h1 className="text-xl font-bold">Customer WAN Configuration</h1><p className="text-sm text-muted-foreground">{customer.customerUniqueId}</p></div>
+          <Button type="button" variant="outline" onClick={() => router.back()}>Back</Button>
+        </div>
+        {ontDevices.length === 0 ? (
+          <div className="rounded-xl border border-dashed p-10 text-center text-muted-foreground">No ACS-linked ONT is available for this customer.</div>
+        ) : ontDevices.map(device => (
+          <TR069DeviceWanConnections key={device.id || device.serialNumber} deviceId={device.serialNumber} />
+        ))}
+      </div>
+    )
+  }
+
   const invoiceAmount = customer.orders.reduce((sum, order) => sum + order.totalAmount, 0)
   const totalPaid = customer.orders.filter(order => order.isPaid).reduce((sum, order) => sum + order.totalAmount, 0)
   const dueAmount = invoiceAmount - totalPaid
@@ -3243,34 +3597,8 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
     zipCode?: string
   }
 
-  const markProvisioningComplete = async () => {
-    setProvisioningStatusSaving(true)
-    try {
-      const response = await apiRequest<{ success: boolean; message?: string }>(`/customer/${customerId}/provisioning-status`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "active" }) })
-      toast.success(response.message || "Customer provisioning marked complete")
-      await fetchCustomerData()
-    } catch (error: any) {
-      toast.error(error.message || "Failed to update provisioning status")
-    } finally {
-      setProvisioningStatusSaving(false)
-    }
-  }
-  const planUsagePercent = latestSubscription ? Math.max(0, Math.min(100, 100 - (daysUntilExpiry / 30) * 100)) : 0
-  const profileHighlights = [
-    { label: "Subscriber ID", value: customer.customerUniqueId || `CUST-${customer.id.toString().padStart(3, "0")}`, icon: Shield },
-    { label: "Primary Login", value: customer.connectionUsers[0]?.username || "Not assigned", icon: Key },
-    { label: "Service Plan", value: customer.subscribedPkg?.packageName || "Not subscribed", icon: Package },
-    { label: "Balance Due", value: formatPrice(dueAmount), icon: CreditCard },
-  ]
-  const overviewSignals = [
-    { label: "ACS", value: String(customer.ontRealtimeStatus || "offline").toUpperCase(), online: String(customer.ontRealtimeStatus || "").toLowerCase() === "online" },
-    { label: "RADIUS", value: String(customer.radiusRealtimeStatus || "offline").toUpperCase(), online: String(customer.radiusRealtimeStatus || "").toLowerCase() === "online" },
-    { label: "Provisioning", value: String(getProvisioningStatus()).toUpperCase(), online: String(getProvisioningStatus()).toLowerCase() === "active" },
-    { label: "Devices", value: String(customer.devices.length), online: customer.devices.length > 0 },
-  ]
-
   return (
-    <div className="customer-profile-shell space-y-6">
+    <div className="space-y-6">
       {/* Dialogs */}
       <NetTVDialog
         open={nettvProvisionOpen}
@@ -3290,6 +3618,18 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
         defaultMobile={customer.secondaryPhone && !/^no secondary$/i.test(customer.secondaryPhone.trim()) ? customer.secondaryPhone : (customer.phoneNumber || "")}
         defaultLat={String((customer as any).lead?.metadata?.latitude ?? (customer as any).lead?.latitude ?? (customer as any).lead?.lat ?? (customer as any).lead?.location?.latitude ?? (customer as any).latitude ?? (customer as any).lat ?? "")}
         defaultLng={String((customer as any).lead?.metadata?.longitude ?? (customer as any).lead?.longitude ?? (customer as any).lead?.lon ?? (customer as any).lead?.lng ?? (customer as any).lead?.location?.longitude ?? (customer as any).longitude ?? (customer as any).lon ?? (customer as any).lng ?? "")}
+      />
+      <NetTVDeviceOrderDialog
+        open={nettvDeviceOrderOpen}
+        onOpenChange={setNettvDeviceOrderOpen}
+        username={nettvProvisionUsername}
+        customerId={customer.id}
+        linkedOnly
+        onComplete={async details => {
+          setNettvDetails(details)
+          setNettvMessage("")
+          await fetchCustomerData()
+        }}
       />
 
       <Dialog open={provisionServicesOpen} onOpenChange={setProvisionServicesOpen}>
@@ -3412,8 +3752,8 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
       <Dialog open={changeUsernameOpen} onOpenChange={setChangeUsernameOpen}>
         <DialogContent className="w-[95vw] sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Change Username</DialogTitle>
-            <DialogDescription>Update the username for this customer's connection.</DialogDescription>
+            <DialogTitle>Change Radius Username</DialogTitle>
+            <DialogDescription>Update the connection username in both this system and Radius.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
@@ -3438,7 +3778,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
             <Button variant="outline" onClick={() => setChangeUsernameOpen(false)}>Cancel</Button>
             <Button onClick={handleChangeUsername} disabled={actionLoading}>
               {actionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Change Username
+              Update Radius Username
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -3518,37 +3858,79 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
       </Dialog>
 
       <Dialog open={renewPackageOpen} onOpenChange={setRenewPackageOpen}>
-        <DialogContent className="w-[95vw] sm:max-w-md">
+        <DialogContent className="w-[95vw] sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Renew Package</DialogTitle>
+            <DialogTitle>Renew {customer?.customerUniqueId}</DialogTitle>
             <DialogDescription>
-              Renew the current package for this customer. This will create a new order and extend the subscription.
+              Choose a package and period for this customer.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-              <div className="flex items-center gap-2">
-                <Package className="h-5 w-5 text-blue-500" />
-                <div>
-                  <div className="font-medium">Current Package</div>
-                  <div className="text-sm text-muted-foreground">
-                    {customer?.subscribedPkg?.packageName} - {formatPrice(customer?.subscribedPkg?.price || 0)}
-                  </div>
-                </div>
+          <div className="grid gap-4 py-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Package</Label>
+              <Select value={renewPlanId} onValueChange={value => { setRenewPlanId(value); setRenewPackageId("") }}>
+                <SelectTrigger><SelectValue placeholder="Select package" /></SelectTrigger>
+                <SelectContent>
+                  {packages.filter((pkg, index, list) => list.findIndex(item => item.planId === pkg.planId) === index).map(pkg => (
+                    <SelectItem key={pkg.planId} value={String(pkg.planId)}>{pkg.packagePlanDetails?.planName || pkg.packageName}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Period</Label>
+              <Select value={renewPackageId} onValueChange={setRenewPackageId} disabled={!renewPlanId}>
+                <SelectTrigger><SelectValue placeholder="Select period" /></SelectTrigger>
+                <SelectContent>
+                  {packages.filter(pkg => String(pkg.planId) === renewPlanId).map(pkg => (
+                    <SelectItem key={pkg.id} value={String(pkg.id)}>{pkg.packageDuration || "1 Month"}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Payment Mode</Label>
+              <Select value={renewPaymentMethodId} onValueChange={setRenewPaymentMethodId}>
+                <SelectTrigger><SelectValue placeholder="Select payment mode" /></SelectTrigger>
+                <SelectContent>{renewPaymentMethods.map(method => <SelectItem key={method.id} value={String(method.id)}>{method.name}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="renew-receipt">Receipt Number</Label>
+              <Input id="renew-receipt" value={renewReceipt} onChange={event => setRenewReceipt(event.target.value)} placeholder="Enter receipt number" />
+            </div>
+            <div className="rounded-lg border bg-muted/40 p-3">
+              <div className="text-sm text-muted-foreground">Total Price</div>
+              <div className="text-xl font-semibold">
+                {formatPrice((() => {
+                  const pkg = packages.find(item => String(item.id) === renewPackageId)
+                  return customer?.isFree ? 0 : customer?.isRechargeable
+                    ? (pkg?.renewAmountWithTax ?? pkg?.price ?? 0)
+                    : (pkg?.initialTotalWithTax ?? pkg?.price ?? 0)
+                })())}
               </div>
             </div>
-            <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg">
-              <div className="flex items-center gap-2">
-                <AlertCircle className="h-5 w-5 text-amber-500" />
-                <div className="text-sm">
-                  A new order will be created and the subscription will be extended based on the package duration.
-                </div>
+            <div className="rounded-lg border bg-muted/40 p-3">
+              <div className="text-sm text-muted-foreground">Estimated Expiry Date</div>
+              <div className="text-lg font-semibold">
+                {(() => {
+                  const pkg = packages.find(item => String(item.id) === renewPackageId)
+                  if (!pkg) return "Select a period"
+                  const currentEnd = latestSubscription?.planEnd ? new Date(latestSubscription.planEnd) : new Date()
+                  const date = currentEnd > new Date() ? currentEnd : new Date()
+                  const duration = String(pkg.packageDuration || "1 month").toLowerCase()
+                  const count = Number(duration.match(/\d+/)?.[0] || 1)
+                  if (/day/.test(duration)) date.setDate(date.getDate() + count)
+                  else if (/year/.test(duration)) date.setFullYear(date.getFullYear() + count)
+                  else date.setMonth(date.getMonth() + count)
+                  return formatDate(date.toISOString())
+                })()}
               </div>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRenewPackageOpen(false)}>Cancel</Button>
-            <Button onClick={handleRenewPackage} disabled={renewLoading} className="bg-gradient-to-r from-green-500 to-emerald-600">
+            <Button onClick={handleRenewPackage} disabled={renewLoading || !renewPackageId}>
               {renewLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Renew Package
             </Button>
@@ -3694,174 +4076,137 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
         </DialogContent>
       </Dialog>
 
-      <section className="overflow-hidden rounded-xl border bg-card shadow-sm">
-        <div className="grid gap-0 lg:grid-cols-[360px_1fr]">
-          <div className="border-b bg-muted/35 p-5 lg:border-b-0 lg:border-r">
-            <div className="flex items-start gap-4">
-              <Avatar className="h-20 w-20 rounded-xl ring-1 ring-border">
+      <CardContainer title="Customer Information" className="bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 border-0 shadow-md">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+            <Avatar className="h-16 w-16 ring-2 ring-primary/20 ring-offset-2">
               {getCustomerProfilePictureUrl() && (
                 <AvatarImage src={getCustomerProfilePictureUrl()} alt={getCustomerFullName()} />
               )}
-              <AvatarFallback className="rounded-xl bg-primary text-xl text-primary-foreground">
+              <AvatarFallback className="bg-gradient-to-br from-primary to-primary/70 text-white">
                 {getCustomerInitials()}
               </AvatarFallback>
             </Avatar>
-              <div className="min-w-0">
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Subscriber profile</p>
-                <h2 className="mt-1 truncate text-2xl font-semibold tracking-tight">{getCustomerFullName()}</h2>
-                <div className="mt-3 flex flex-wrap gap-2">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-2xl font-bold">{getCustomerFullName()}</h2>
+                <div className="flex items-center gap-2">
                   {getStatusBadge(customer.status)}
-                  {latestSubscription?.isTrial && <Badge variant="secondary">Trial</Badge>}
-                  {customer.isRechargeable && <Badge variant="outline">Rechargeable</Badge>}
-                  {customer.referencedById && <Badge variant="outline">Referred</Badge>}
+                  {latestSubscription?.isTrial && (
+                    <Badge className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white border-0">TRIAL</Badge>
+                  )}
+                  {customer.isRechargeable && (
+                    <Badge className="bg-gradient-to-r from-purple-500 to-pink-600 text-white border-0">RECHARGEABLE</Badge>
+                  )}
+                  {customer.referencedById && (
+                    <Badge className="bg-gradient-to-r from-cyan-500 to-teal-600 text-white border-0">REFERRED</Badge>
+                  )}
+                  <Badge className={String(customer.ontRealtimeStatus || '').toLowerCase() === 'online' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}>
+                    ACS {String(customer.ontRealtimeStatus || 'offline').toUpperCase()}
+                  </Badge>
+                  <Badge className={String(customer.radiusRealtimeStatus || '').toLowerCase() === 'online' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}>
+                    RADIUS {String(customer.radiusRealtimeStatus || 'offline').toUpperCase()}
+                  </Badge>
                 </div>
               </div>
-            </div>
-            <div className="mt-5 space-y-2 text-sm">
-              <button type="button" className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-background ${!voipEnabled ? "cursor-not-allowed opacity-60" : ""}`} onClick={() => handleOutboundCall(customer.phoneNumber)}>
-                <Phone className="h-4 w-4 text-muted-foreground" /> {customer.phoneNumber || "No mobile number"}
-              </button>
-              <div className="flex items-center gap-2 rounded-md px-2 py-1.5"><Mail className="h-4 w-4 text-muted-foreground" /> <span className="truncate">{customer.email || "No email address"}</span></div>
-              <div className="flex items-center gap-2 rounded-md px-2 py-1.5"><MapPin className="h-4 w-4 text-muted-foreground" /> <span className="truncate">{[customer.street, customer.district, customer.state].filter(Boolean).join(", ") || "No address saved"}</span></div>
-              <div className="flex items-center gap-2 rounded-md px-2 py-1.5"><Calendar className="h-4 w-4 text-muted-foreground" /> Member since {formatDate(customer.createdAt)}</div>
-            </div>
-          </div>
-          <div className="grid gap-3 p-5 sm:grid-cols-2 xl:grid-cols-4">
-            {profileHighlights.map((item) => {
-              const Icon = item.icon
-              return (
-                <div key={item.label} className="rounded-lg border bg-background p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-xs font-medium text-muted-foreground">{item.label}</span>
-                    <Icon className="h-4 w-4 text-primary" />
-                  </div>
-                  <div className="mt-3 truncate text-lg font-semibold">{item.value}</div>
-                </div>
-              )
-            })}
-            <div className="sm:col-span-2 xl:col-span-4">
-              <div className="grid gap-2 sm:grid-cols-4">
-                {overviewSignals.map((signal) => (
-                  <div key={signal.label} className="flex items-center justify-between rounded-md border bg-muted/20 px-3 py-2 text-xs">
-                    <span className="font-medium text-muted-foreground">{signal.label}</span>
-                    <span className={signal.online ? "font-semibold text-emerald-600" : "font-semibold text-amber-600"}>{signal.value}</span>
-                  </div>
-                ))}
+              <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 text-sm text-muted-foreground mt-1">
+                <div className="flex items-center"><Shield className="mr-1 h-4 w-4" /> ID Number: {customer.idNumber || "N/A"}</div>
+                <button type="button" className={`flex items-center hover:text-green-600 ${!voipEnabled ? "cursor-not-allowed opacity-50 hover:text-muted-foreground" : ""}`} onClick={() => handleOutboundCall(customer.phoneNumber)}>
+                  <Phone className="mr-1 h-4 w-4" /> Mobile: {customer.phoneNumber}
+                </button>
+                {customer.secondaryPhone && (
+                  <button type="button" className={`flex items-center hover:text-green-600 ${!voipEnabled ? "cursor-not-allowed opacity-50 hover:text-muted-foreground" : ""}`} onClick={() => handleOutboundCall(customer.secondaryPhone)}>
+                    <Phone className="mr-1 h-4 w-4" /> Secondary: {customer.secondaryPhone}
+                  </button>
+                )}
+                <div className="flex items-center"><Mail className="mr-1 h-4 w-4" /> Email: {customer.email}</div>
+                <div className="flex items-center"><Calendar className="mr-1 h-4 w-4" /> Member Since: {formatDate(customer.createdAt)}</div>
+              </div>
+              <div className="text-xs text-muted-foreground mt-2">
+                Customer ID: {customer.customerUniqueId || `CUST-${customer.id.toString().padStart(3, '0')}`} | ISP: {customer.isp.companyName} | Lead ID: {customer.leadId || "N/A"}
               </div>
             </div>
           </div>
         </div>
-      </section>
+      </CardContainer>
 
-      <div className="customer-action-bar sticky top-0 z-20 flex flex-wrap items-center gap-2.5 rounded-xl border bg-card/95 p-2.5 shadow-sm backdrop-blur-xl">
-        {/* Primary Action 1: Provisioning */}
-        <Button size="sm" variant="ai" className="h-9" onClick={() => setProvisionServicesOpen(true)}>
+      <div className="flex flex-wrap gap-2 p-2 bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 rounded-lg shadow-sm">
+        <Button size="sm" className="h-9 bg-gradient-to-r from-violet-600 to-purple-600 text-white border-0 shadow-sm" onClick={() => setProvisionServicesOpen(true)}>
           <Zap className="mr-2 h-4 w-4" /> Activate / Provision Services
         </Button>
-
-        {/* Primary Action 2: Mark Complete (Conditional) */}
         {(customer.serviceDetails?.some(service => service.status !== "active") || customer.devices?.some(device => device.deviceType === "ONT" && device.provisioningStatus !== "active")) && (
-          <Button size="sm" variant="outline" className="h-9 border-emerald-600 text-emerald-700 dark:text-emerald-400" onClick={markProvisioningComplete} disabled={provisioningStatusSaving}>
+          <Button size="sm" variant="outline" className="h-9 border-emerald-600 text-emerald-700" onClick={markProvisioningComplete} disabled={provisioningStatusSaving}>
             {provisioningStatusSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />} Mark Provisioning Complete
           </Button>
         )}
-
-        {/* Group 1: Subscription & Package Actions */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button size="sm" variant="outline" className="h-9 gap-1 font-medium">
-              <Package className="mr-1 h-4 w-4 text-emerald-600" />
-              Subscription & Package
-              <ChevronDown className="ml-1 h-3.5 w-3.5 opacity-70" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-56">
-            <DropdownMenuLabel className="text-xs text-muted-foreground uppercase font-semibold">Package Commands</DropdownMenuLabel>
-            <DropdownMenuItem onClick={() => setRenewPackageOpen(true)} className="cursor-pointer">
-              <RefreshCw className="mr-2 h-4 w-4 text-emerald-600" /> Renew Package
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setChangePackageOpen(true)} className="cursor-pointer">
-              <Package className="mr-2 h-4 w-4 text-indigo-600" /> Change Packages
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setChangeUsernameOpen(true)} className="cursor-pointer">
-              <User className="mr-2 h-4 w-4 text-blue-600" /> Change Username
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        {/* Group 2: Provisioning & Services Commands */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button size="sm" variant="outline" className="h-9 gap-1 font-medium">
-              <Settings className="mr-1 h-4 w-4 text-blue-600" />
-              Provisioning & Services
-              <ChevronDown className="ml-1 h-3.5 w-3.5 opacity-70" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-60">
-            <DropdownMenuLabel className="text-xs text-muted-foreground uppercase font-semibold">Service Operations</DropdownMenuLabel>
-            <DropdownMenuItem onClick={syncAcsDevice} disabled={acsSyncing} className="cursor-pointer">
-              <RefreshCw className={`mr-2 h-4 w-4 text-cyan-600 ${acsSyncing ? 'animate-spin' : ''}`} /> Sync ACS
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={openReprovisionRadiusDialog} disabled={serviceActionLoading === "radius"} className="cursor-pointer">
-              <Key className="mr-2 h-4 w-4 text-amber-600" /> Reprovision Radius
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setNettvProvisionOpen(true)} disabled={serviceActionLoading === "nettv"} className="cursor-pointer">
-              <Tv className="mr-2 h-4 w-4 text-purple-600" /> Reprovision NetTV
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => customer?.customerUniqueId && router.push(`/nettv?subscriber=${encodeURIComponent(customer.customerUniqueId)}`)}
-              disabled={!customer?.customerUniqueId || !isNettvProvisioned}
-              className="cursor-pointer"
-            >
-              <ExternalLink className="mr-2 h-4 w-4 text-teal-600" /> Open NetTV Details
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={handleReprovisionAccount} disabled={serviceActionLoading === "account"} className="cursor-pointer">
-              <CreditCard className="mr-2 h-4 w-4 text-emerald-600" /> Reprovision Account
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        {/* Group 3: Account & Technical Tools */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button size="sm" variant="outline" className="h-9 gap-1 font-medium">
-              <HardDrive className="mr-1 h-4 w-4 text-amber-600" />
-              Account & Technical
-              <ChevronDown className="ml-1 h-3.5 w-3.5 opacity-70" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-56">
-            <DropdownMenuItem
-              onClick={() => {
-                const defaultMac = customer?.devices?.[0]?.macAddress || customer?.devices?.[0]?.serialNumber || customer?.devices?.[0]?.ponSerial || "";
-                setSelectedMacForOlt(defaultMac);
-                setOltFinderOpen(true);
-              }}
-              className="cursor-pointer"
-            >
-              <Search className="mr-2 h-4 w-4 text-indigo-600" /> Find OLT
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setAssignHardwareOpen(true)} className="cursor-pointer">
-              <HardDrive className="mr-2 h-4 w-4 text-blue-600" /> Assign / Add Hardware
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setResetMacOpen(true)} className="cursor-pointer">
-              <RefreshCw className="mr-2 h-4 w-4 text-amber-600" /> MAC RESET
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={handleDisconnectSession} disabled={serviceActionLoading === "disconnect"} className="cursor-pointer text-amber-600 dark:text-amber-400">
-              <WifiOff className="mr-2 h-4 w-4" /> Disconnect Session
-            </DropdownMenuItem>
-            {customer?.leadId && (
-              <DropdownMenuItem onClick={() => router.push(`/leads/edit/${customer.leadId}`)} className="cursor-pointer">
-                <Pencil className="mr-2 h-4 w-4 text-amber-500" /> Edit Lead Details
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={handleDeleteCustomer} disabled={actionLoading} className="cursor-pointer text-red-600 dark:text-red-400 focus:bg-red-50 dark:focus:bg-red-950/30">
-              <Trash2 className="mr-2 h-4 w-4" /> Delete Customer
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <Button size="sm" className="h-9 bg-gradient-to-r from-green-500 to-emerald-600 text-white border-0 shadow-sm hover:shadow-md transition-all" onClick={() => setRenewPackageOpen(true)}>
+          <RefreshCw className="mr-2 h-4 w-4" /> Renew Package
+        </Button>
+        <Button size="sm" variant="outline" className="h-9" onClick={syncAcsDevice} disabled={acsSyncing}>
+          {acsSyncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />} Sync ACS
+        </Button>
+        <Button size="sm" className="h-9 bg-gradient-to-r from-blue-500 to-indigo-600 text-white border-0 shadow-sm hover:shadow-md transition-all" onClick={() => setChangeUsernameOpen(true)}>
+          <User className="mr-2 h-4 w-4" /> Change Radius Username
+        </Button>
+        <Button
+          size="sm"
+          className="h-9 bg-gradient-to-r from-sky-500 to-cyan-600 text-white border-0 shadow-sm hover:shadow-md transition-all"
+          onClick={() => {
+            const selected = customer.connectionUsers.find((item) => String(item.id) === selectedConnectionUser) || customer.connectionUsers[0]
+            if (selected) openRadiusPasswordDialog(selected)
+            else toast.error("No connection user is available")
+          }}
+        >
+          <Key className="mr-2 h-4 w-4" /> Change Radius Password
+        </Button>
+        <Button size="sm" className="h-9 bg-gradient-to-r from-amber-500 to-orange-600 text-white border-0 shadow-sm hover:shadow-md transition-all" onClick={() => setChangePackageOpen(true)}>
+          <Package className="mr-2 h-4 w-4" /> Change Packages
+        </Button>
+        <Button size="sm" className="h-9 bg-gradient-to-r from-red-500 to-rose-600 text-white border-0 shadow-sm hover:shadow-md transition-all" onClick={() => setResetMacOpen(true)}>
+          <RefreshCw className="mr-2 h-4 w-4" /> MAC RESET
+        </Button>
+        <Button size="sm" className="h-9 bg-gradient-to-r from-indigo-500 to-violet-600 text-white border-0 shadow-sm hover:shadow-md transition-all" onClick={openReprovisionRadiusDialog} disabled={serviceActionLoading === "radius"}>
+          {serviceActionLoading === "radius" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Key className="mr-2 h-4 w-4" />}
+          Reprovision Radius
+        </Button>
+        <Button size="sm" className="h-9 bg-gradient-to-r from-pink-500 to-purple-600 text-white border-0 shadow-sm hover:shadow-md transition-all" onClick={() => setNettvProvisionOpen(true)} disabled={serviceActionLoading === "nettv"}>
+          {serviceActionLoading === "nettv" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Tv className="mr-2 h-4 w-4" />}
+          Reprovision NetTV
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-9"
+          onClick={() => {
+            const username = getLinkedNettvUsername(customer)
+            if (username) router.push(`/nettv?subscriber=${encodeURIComponent(username)}`)
+          }}
+          disabled={!getLinkedNettvUsername(customer) || !isNettvProvisioned}
+        >
+          <ExternalLink className="mr-2 h-4 w-4" /> Open NetTV Details
+        </Button>
+        <Button size="sm" className="h-9 bg-gradient-to-r from-cyan-500 to-blue-600 text-white border-0 shadow-sm hover:shadow-md transition-all" onClick={handleReprovisionAccount} disabled={serviceActionLoading === "account"}>
+          {serviceActionLoading === "account" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CreditCard className="mr-2 h-4 w-4" />}
+          Reprovision Account
+        </Button>
+        <Button size="sm" className="h-9 bg-gradient-to-r from-yellow-500 to-amber-600 text-white border-0 shadow-sm hover:shadow-md transition-all" onClick={handleDisconnectSession} disabled={serviceActionLoading === "disconnect"}>
+          {serviceActionLoading === "disconnect" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <WifiOff className="mr-2 h-4 w-4" />}
+          Disconnect Session
+        </Button>
+        <Button size="sm" className="h-9 bg-gradient-to-r from-red-500 to-rose-600 text-white border-0 shadow-sm hover:shadow-md transition-all" onClick={handleDeleteCustomer} disabled={actionLoading}>
+          {actionLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+          Delete Customer
+        </Button>
+        {customer?.leadId && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-9 border-amber-300 hover:bg-amber-50 hover:text-amber-800 dark:hover:bg-amber-950/20"
+            onClick={() => router.push(`/leads/edit/${customer.leadId}`)}
+          >
+            <Pencil className="mr-2 h-4 w-4 text-amber-500" /> Edit Lead Details
+          </Button>
+        )}
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
@@ -3869,7 +4214,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
           <TabsTrigger value="overview" className="flex-1 flex-shrink-0"><User className="mr-2 h-4 w-4" />Overview</TabsTrigger>
           <TabsTrigger value="billing" className="flex-1 flex-shrink-0"><CreditCard className="mr-2 h-4 w-4" />Billing</TabsTrigger>
           <TabsTrigger value="devices" className="flex-1 flex-shrink-0"><Wifi className="mr-2 h-4 w-4" />Devices</TabsTrigger>
-          <TabsTrigger value="usage" className="flex-1 flex-shrink-0"><BarChart className="mr-2 h-4 w-4" />Graphs</TabsTrigger>
+          <TabsTrigger value="usage" className="flex-1 flex-shrink-0"><BarChart className="mr-2 h-4 w-4" />Usage</TabsTrigger>
           <TabsTrigger value="realtime" className="flex-1 flex-shrink-0"><Activity className="mr-2 h-4 w-4" />Realtime Usage</TabsTrigger>
           <TabsTrigger value="documents" className="flex-1 flex-shrink-0"><FileText className="mr-2 h-4 w-4" />Documents</TabsTrigger>
           <TabsTrigger value="radius" className="flex-1 flex-shrink-0"><Key className="mr-2 h-4 w-4" />Radius Login</TabsTrigger>
@@ -3879,50 +4224,6 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4">
-          <section className="grid gap-4 xl:grid-cols-[1.25fr_.75fr]">
-            <div className="rounded-xl border bg-card p-4 shadow-sm">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Service command summary</p>
-                  <h3 className="mt-1 text-xl font-semibold">{customer.subscribedPkg?.packageName || "No active package"}</h3>
-                </div>
-                <Badge className={daysUntilExpiry < 7 ? "bg-red-600 text-white" : daysUntilExpiry < 30 ? "bg-amber-600 text-white" : "bg-emerald-600 text-white"}>
-                  {latestSubscription ? `${daysUntilExpiry} days remaining` : "No subscription"}
-                </Badge>
-              </div>
-              <div className="mt-4 grid gap-3 md:grid-cols-3">
-                <div className="rounded-lg bg-muted/30 p-3">
-                  <div className="text-xs text-muted-foreground">Speed Profile</div>
-                  <div className="mt-1 font-semibold">{customer.subscribedPkg?.packagePlanDetails?.downSpeed || "N/A"} / {customer.subscribedPkg?.packagePlanDetails?.upSpeed || "N/A"} Mbps</div>
-                </div>
-                <div className="rounded-lg bg-muted/30 p-3">
-                  <div className="text-xs text-muted-foreground">Primary Device</div>
-                  <div className="mt-1 truncate font-semibold">{getDeviceModel()}</div>
-                </div>
-                <div className="rounded-lg bg-muted/30 p-3">
-                  <div className="text-xs text-muted-foreground">Active Sessions</div>
-                  <div className="mt-1 font-semibold">{customer.connectionUsers.filter((item) => item.isActive).length} RADIUS user(s)</div>
-                </div>
-              </div>
-              <div className="mt-4">
-                <div className="mb-2 flex items-center justify-between text-xs">
-                  <span className="text-muted-foreground">Current cycle progress</span>
-                  <span className="font-medium">{latestSubscription ? `${Math.round(planUsagePercent)}% used` : "N/A"}</span>
-                </div>
-                <Progress value={planUsagePercent} className="h-2" />
-              </div>
-            </div>
-            <div className="rounded-xl border bg-card p-4 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Quick facts</p>
-              <div className="mt-3 grid gap-2 text-sm">
-                <div className="flex justify-between gap-4 border-b pb-2"><span className="text-muted-foreground">ISP</span><span className="font-medium">{customer.isp.companyName}</span></div>
-                <div className="flex justify-between gap-4 border-b pb-2"><span className="text-muted-foreground">ID / PAN</span><span className="font-medium">{customer.idNumber || "N/A"} / {customer.panNo || "N/A"}</span></div>
-                <div className="flex justify-between gap-4 border-b pb-2"><span className="text-muted-foreground">Lead</span><span className="font-medium">{customer.leadId || "N/A"}</span></div>
-                <div className="flex justify-between gap-4"><span className="text-muted-foreground">Last update</span><span className="font-medium">{formatDate(customer.updatedAt)}</span></div>
-              </div>
-            </div>
-          </section>
-
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <CardContainer title="Account Details" className="bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 border-0 shadow-md">
               <div className="space-y-3">
@@ -4754,10 +5055,12 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
                   <Cpu className="h-5 w-5" />
-                  Fiber Network Provisioning
+                  {hardwareDialogMode === "change-olt" ? "Change OLT / PON" : "Fiber Network Provisioning"}
                 </DialogTitle>
                 <DialogDescription>
-                  Configure splitter, OLT, VLANs, and add devices. Use Autofind to discover and match ONT.
+                  {hardwareDialogMode === "change-olt"
+                    ? "Move the existing ONT to another OLT or PON port. Autofind is available to locate the same device."
+                    : "Configure splitter, OLT, VLANs, and add devices. Use Autofind to discover and match ONT."}
                 </DialogDescription>
               </DialogHeader>
 
@@ -5038,14 +5341,16 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
                 {/* Customer Devices Section */}
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
-                    <Label className="text-base font-semibold">Customer Devices</Label>
-                    <Button type="button" variant="outline" size="sm" onClick={() => {
-                      setHwEditingDeviceIndex(null)
-                      setHwDeviceDialogOpen(true)
-                    }}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Device
-                    </Button>
+                    <Label className="text-base font-semibold">{hardwareDialogMode === "change-olt" ? "Existing Device" : "Customer Devices"}</Label>
+                    {hardwareDialogMode === "add" && (
+                      <Button type="button" variant="outline" size="sm" onClick={() => {
+                        setHwEditingDeviceIndex(null)
+                        setHwDeviceDialogOpen(true)
+                      }}>
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add Device
+                      </Button>
+                    )}
                   </div>
 
                   {hwDevices.length === 0 ? (
@@ -5062,14 +5367,14 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
                             </div>
                             {device.notes && <div className="text-xs text-gray-500 mt-1 italic">Notes: {device.notes}</div>}
                           </div>
-                          <div className="flex gap-2">
+                          {hardwareDialogMode === "add" && <div className="flex gap-2">
                             <Button type="button" variant="ghost" size="sm" onClick={() => openDeviceDialogForEdit(index)}>
                               Edit
                             </Button>
                             <Button type="button" variant="ghost" size="sm" className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20" onClick={() => removeDevice(index)}>
                               <Trash2 className="h-4 w-4" />
                             </Button>
-                          </div>
+                          </div>}
                         </div>
                       ))}
                     </div>
@@ -5081,7 +5386,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
                   <div className="space-y-4 border rounded-lg p-4 bg-muted/20">
                     <div className="flex items-center justify-between">
                       <Label className="text-sm font-semibold">ONT Discovery</Label>
-                      {isAlreadyProvisioned ? (
+                      {isAlreadyProvisioned && hardwareDialogMode !== "change-olt" ? (
                         <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 hover:bg-green-100">
                           PROVISIONED & ACTIVE
                         </Badge>
@@ -5102,7 +5407,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
                       )}
                     </div>
 
-                    {isAlreadyProvisioned ? (
+                    {isAlreadyProvisioned && hardwareDialogMode !== "change-olt" ? (
                       <p className="text-xs text-muted-foreground">
                         The ONT device is already successfully provisioned and active on the OLT network.
                       </p>
@@ -5182,7 +5487,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
                 <Button variant="outline" onClick={() => setAssignHardwareOpen(false)}>Cancel</Button>
                 <Button onClick={handleHwProvisionSave} disabled={hwProvisionLoading}>
                   {hwProvisionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Device Provision
+                  {hardwareDialogMode === "change-olt" ? "Save OLT / PON Change" : "Device Provision"}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -5217,10 +5522,20 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
             onConfirm={confirmDeleteDevice}
           />
 
+          <ConfirmDialog
+            open={Boolean(rebootDevice)}
+            onOpenChange={(open) => { if (!open && !rebootingSerial) setRebootDevice(null) }}
+            title="Reboot ACS device?"
+            description={`Send a TR-069 reboot command to ${rebootDevice?.brand || "the"} ${rebootDevice?.model || "device"} (${rebootDevice?.serialNumber || "unknown serial"})? The customer's connection may be interrupted briefly.`}
+            confirmLabel="Reboot Device"
+            cancelLabel="Cancel"
+            onConfirm={handleRebootAcsDevice}
+          />
+
           <CardContainer title="Assigned Hardware" className="bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 border-0 shadow-md">
             <div className="flex items-center justify-between mb-4">
               <div className="text-sm text-muted-foreground">{customer.devices.length} device{customer.devices.length === 1 ? "" : "s"} assigned</div>
-              <Button onClick={() => setAssignHardwareOpen(true)}>
+              <Button onClick={() => { setHardwareDialogMode("add"); setChangeOltDeviceId(null); setAssignHardwareOpen(true) }}>
                 <Plus className="mr-2 h-4 w-4" /> Add Hardware
               </Button>
             </div>
@@ -5244,34 +5559,32 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
                           Serial: <span className="font-mono">{device.serialNumber || "N/A"}</span> | MAC: <span className="font-mono">{device.macAddress || "N/A"}</span>
                           {device.ponSerial && ` | PON-SN: ${device.ponSerial}`}
                         </div>
-                        <div className="grid gap-3 pt-2 sm:grid-cols-2">
-                          <OpticalPowerIndicator label="ONT Rx" value={device.ontRxPower ?? -19.5} />
-                          <OpticalPowerIndicator label="OLT Rx" value={device.oltRxPower ?? -21.2} />
-                        </div>
-                        {device.oltName && <Badge variant="secondary">{device.oltName}{device.servicePort ? ` / ${device.servicePort}` : ""}</Badge>}
                         {device.notes && <div className="text-xs text-muted-foreground italic">Note: {device.notes}</div>}
                       </div>
                       <div className="flex items-center gap-2">
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className="h-8 gap-1 text-xs font-semibold text-indigo-600 border-indigo-200 hover:bg-indigo-50 dark:border-indigo-900"
-                          onClick={() => {
-                            const deviceMac = device.macAddress || device.serialNumber || device.ponSerial;
-                            setSelectedMacForOlt(deviceMac || "");
-                            setOltFinderOpen(true);
-                          }}
-                          disabled={actionLoading || isRemoving}
-                        >
-                          <Search className="h-3.5 w-3.5 text-indigo-500" />
-                          Find OLT
-                        </Button>
+                        {device.deviceType === "ONT" && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-xs gap-1.5"
+                            onClick={() => {
+                              setHardwareDialogMode("change-olt")
+                              setChangeOltDeviceId(device.id)
+                              setAssignHardwareOpen(true)
+                            }}
+                            disabled={actionLoading || isRemoving}
+                          >
+                            <Network className="h-3.5 w-3.5" />
+                            Change OLT/PON
+                          </Button>
+                        )}
                         <Button 
                           variant="ghost" 
                           size="icon" 
                           className="h-8 w-8 text-muted-foreground hover:text-foreground"
                           onClick={() => {
-                            setAssignHardwareOpen(true);
+                            setEditingDevice(device)
+                            setEditDeviceOpen(true)
                           }}
                           disabled={actionLoading || isRemoving}
                         >
@@ -5298,42 +5611,47 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
             )}
           </CardContainer>
 
-          {customer.devices.length > 0 && (
-            <CardContainer title="ACS Device Information & Diagnostics" className="bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 border-0 shadow-md mt-4">
-              <Tabs defaultValue={customer.devices[0]?.serialNumber || customer.devices[0]?.ponSerial || customer.devices[0]?.macAddress}>
+          {customer.devices.filter(d => d.deviceType === "ONT" && d.serialNumber).length > 0 && (
+            <CardContainer title="ACS Device Information" className="bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 border-0 shadow-md">
+              <Tabs defaultValue={customer.devices.find(d => d.deviceType === "ONT")?.serialNumber}>
                 <TabsList className="w-full flex overflow-x-auto justify-start h-auto scrollbar-none mb-4 bg-muted p-1 rounded-lg">
-                  {customer.devices.map((device, idx) => {
-                    const devId = device.serialNumber || device.ponSerial || device.macAddress;
-                    return (
-                      <TabsTrigger key={idx} value={devId} className="flex-shrink-0">
-                        {device.brand || device.deviceType || "Device"} {device.model || ""}
-                      </TabsTrigger>
-                    );
-                  })}
+                  {customer.devices.filter(d => d.deviceType === "ONT").map((device, idx) => (
+                    <TabsTrigger key={idx} value={device.serialNumber} className="flex-shrink-0">{device.brand} {device.model}</TabsTrigger>
+                  ))}
                 </TabsList>
-                {customer.devices.map((device, idx) => {
-                  const devId = device.serialNumber || device.ponSerial || device.macAddress;
-                  return (
-                    <TabsContent key={idx} value={devId}>
-                      <Tabs defaultValue="basic-info">
-                        <TabsList className="w-full flex overflow-x-auto justify-start h-auto scrollbar-none mb-4 bg-muted p-1 rounded-lg">
-                          <TabsTrigger value="basic-info" className="flex-shrink-0">Basic Info</TabsTrigger>
-                          <TabsTrigger value="wan" className="flex-shrink-0">WAN Connections</TabsTrigger>
-                          <TabsTrigger value="wifi" className="flex-shrink-0">WiFi Config</TabsTrigger>
-                          <TabsTrigger value="wifi-map" className="flex-shrink-0">WiFi Map</TabsTrigger>
-                          <TabsTrigger value="lan" className="flex-shrink-0">LAN / Ethernet</TabsTrigger>
-                          <TabsTrigger value="neighbor-devices" className="flex-shrink-0">Connected Devices</TabsTrigger>
-                        </TabsList>
-                        <TabsContent value="basic-info"><TR069DeviceDetails deviceId={devId} /></TabsContent>
-                        <TabsContent value="wan"><TR069DeviceWanConnections deviceId={devId} /></TabsContent>
-                        <TabsContent value="wifi"><TR069DeviceWifi deviceId={devId} /></TabsContent>
-                        <TabsContent value="wifi-map"><WifiClientTopology deviceId={devId} /></TabsContent>
-                        <TabsContent value="lan"><TR069DeviceLanInfo deviceId={devId} /></TabsContent>
-                        <TabsContent value="neighbor-devices"><TR069DeviceNeighbors deviceId={devId} /></TabsContent>
-                      </Tabs>
-                    </TabsContent>
-                  );
-                })}
+                {customer.devices.filter(d => d.deviceType === "ONT").map((device, idx) => (
+                  <TabsContent key={idx} value={device.serialNumber}>
+                    <div className="mb-3 flex justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="border-amber-500 text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/20"
+                        onClick={() => setRebootDevice({ ...device, notes: device.notes || "" })}
+                        disabled={rebootingSerial === device.serialNumber}
+                      >
+                        {rebootingSerial === device.serialNumber
+                          ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          : <RotateCcw className="mr-2 h-4 w-4" />}
+                        Reboot Device
+                      </Button>
+                    </div>
+                    <Tabs defaultValue="basic-info">
+                      <TabsList className="w-full flex overflow-x-auto justify-start h-auto scrollbar-none mb-4 bg-muted p-1 rounded-lg">
+                        <TabsTrigger value="basic-info" className="flex-shrink-0">Basic Info</TabsTrigger>
+                        <TabsTrigger value="wan" className="flex-shrink-0">WAN Connections</TabsTrigger>
+                        <TabsTrigger value="wifi" className="flex-shrink-0">WiFi</TabsTrigger>
+                        <TabsTrigger value="lan" className="flex-shrink-0">LAN</TabsTrigger>
+                        <TabsTrigger value="neighbor-devices" className="flex-shrink-0">Connected Devices</TabsTrigger>
+                      </TabsList>
+                      <TabsContent value="basic-info"><TR069DeviceDetails deviceId={device.serialNumber} /></TabsContent>
+                      <TabsContent value="wan"><TR069DeviceWanConnections deviceId={device.serialNumber} /></TabsContent>
+                      <TabsContent value="wifi"><TR069DeviceWifi deviceId={device.serialNumber} /></TabsContent>
+                      <TabsContent value="lan"><TR069DeviceLanInfo deviceId={device.serialNumber} /></TabsContent>
+                      <TabsContent value="neighbor-devices"><TR069DeviceNeighbors deviceId={device.serialNumber} /></TabsContent>
+                    </Tabs>
+                  </TabsContent>
+                ))}
               </Tabs>
             </CardContainer>
           )}
@@ -5653,8 +5971,21 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
 
         <TabsContent value="nettv" className="space-y-4">
           <div className="flex justify-between items-center">
-            <h3 className="text-lg font-semibold dark:text-white">NetTV Service Details</h3>
+            <div>
+              <h3 className="text-lg font-semibold dark:text-white">NetTV Service Details</h3>
+              <p className="text-sm text-muted-foreground">Linked username: <span className="font-mono font-medium text-foreground">{getLinkedNettvUsername(customer) || "Not linked"}</span></p>
+            </div>
             <div className="flex items-center space-x-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setNettvProvisionUsername(getLinkedNettvUsername(customer))
+                  setNettvDeviceOrderOpen(true)
+                }}
+                disabled={!getLinkedNettvUsername(customer)}
+              >
+                <Tv className="mr-2 h-4 w-4" /> Manage STB & Package
+              </Button>
               {nettvDetails && (
                 <Button
                   onClick={() => {
@@ -5669,7 +6000,7 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
               )}
               <Button
                 onClick={handleSyncNettv}
-                disabled={syncingNettv || loadingNettv || !customer?.customerUniqueId}
+                disabled={syncingNettv || loadingNettv || !getLinkedNettvUsername(customer)}
                 className="bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 text-white shadow-sm border-0"
               >
                 {syncingNettv ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
@@ -5935,6 +6266,16 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
                       </div>
                     )}
                   </CardContainer>
+                  <CardContainer title="NetTV Orders" className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 shadow-sm">
+                    {nettvOrders.length === 0 ? <p className="p-4 text-center text-sm text-muted-foreground">No NetTV orders found for this subscriber.</p> : <div className="space-y-2 p-1">
+                      {nettvOrders.map((order: any, index: number) => <div key={order.id || index} className="grid gap-2 rounded-lg border bg-muted/20 p-3 text-sm sm:grid-cols-4">
+                        <div><span className="block text-xs text-muted-foreground">Order</span>#{order.id || order.order_id || index + 1}</div>
+                        <div><span className="block text-xs text-muted-foreground">Package</span>{order.package_name || order.name || order.package?.name || "N/A"}</div>
+                        <div><span className="block text-xs text-muted-foreground">Quantity / Amount</span>{order.qty || order.quantity || 1} · Rs. {order.amount || order.total || order.price || 0}</div>
+                        <div><span className="block text-xs text-muted-foreground">Status</span><Badge variant="secondary">{order.status || "Active"}</Badge></div>
+                      </div>)}
+                    </div>}
+                  </CardContainer>
                 </div>
               );
             })()
@@ -5979,32 +6320,57 @@ export function CustomerProfile({ customerId: customerIdProp }: CustomerProfileP
                   No activity log history recorded for this customer.
                 </div>
               ) : (
-                <OrchestrationConsole logs={auditLogs} title="Customer Orchestration Output Console" />
+                <div className="relative border-l border-slate-200 ml-3 pl-6 space-y-6">
+                  {auditLogs.map((log: any) => {
+                    let logDetails = {};
+                    try {
+                      logDetails = typeof log.details === 'string' ? JSON.parse(log.details) : log.details || {};
+                    } catch (e) {
+                      logDetails = { message: log.details };
+                    }
+                    return (
+                      <div key={log.id} className="relative group">
+                        <div className="absolute -left-[31px] top-1.5 w-3 h-3 rounded-full bg-indigo-500 border-2 border-white ring-4 ring-indigo-50 dark:ring-indigo-950/20 group-hover:bg-indigo-600 transition-colors" />
+                        
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+                          <div>
+                            <span className="font-semibold text-sm text-slate-800 dark:text-slate-200 uppercase">
+                              {String(log.action).replace(/_/g, ' ')}
+                            </span>
+                            <span className="text-xs text-slate-400 ml-2">
+                              by {log.user?.name || 'System'} ({log.user?.email || 'automated'})
+                            </span>
+                          </div>
+                          <span className="text-[11px] text-slate-400 dark:text-slate-500 font-mono">
+                            {new Date(log.timestamp).toLocaleString()}
+                          </span>
+                        </div>
+
+                        <div className="mt-1.5 text-xs text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/50 p-2.5 rounded-lg border border-slate-100 dark:border-slate-800 font-mono overflow-x-auto max-w-full">
+                          <div className="font-bold text-slate-500 mb-1">Details:</div>
+                          <pre className="text-[11px] font-sans leading-relaxed whitespace-pre-wrap">
+                            {JSON.stringify(logDetails, null, 2)}
+                          </pre>
+                          {(log.ip || log.browser) && (
+                            <div className="mt-2 pt-1 border-t border-slate-200/50 text-[10px] text-slate-400 dark:text-slate-500 flex flex-wrap gap-x-4">
+                              {log.ip && <span>IP: {log.ip}</span>}
+                              {log.browser && <span className="truncate max-w-xs">Browser: {log.browser}</span>}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
           </CardContainer>
         </TabsContent>
       </Tabs>
-
-      {/* Customer OLT Finder Modal */}
-      <CustomerOLTFinder
-        isOpen={oltFinderOpen}
-        onClose={() => setOltFinderOpen(false)}
-        macAddress={selectedMacForOlt}
-        customerId={customer?.id}
-        onOltLinked={() => {
-          if (typeof window !== "undefined") window.location.reload();
-        }}
-      />
     </div>
   )
 }
 const buildNettvCredential = (value?: string | null) => {
   const cleaned = String(value || "").trim().replace(/^_?nettv/i, "").replace(/_nettv$/i, "")
   return cleaned ? `${cleaned}_nettv` : ""
-}
-
-const getLinkedNettvUsername = (customer?: Customer | null) => {
-  const app = customer?.subscribedApps?.find((item: any) => String(item.service?.code || "").toUpperCase() === "NETTV") as any
-  return String(app?.externalUsername || app?.serviceData?.username || app?.serviceData?.subscriber?.username || "").trim()
 }

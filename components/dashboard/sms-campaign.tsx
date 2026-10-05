@@ -717,7 +717,7 @@ export function SmsCampaign() {
 
   const fetchSmsProviders = async () => {
     try {
-      const res = await apiRequest<any>("/service/isp?includeInactive=true")
+      const res = await apiRequest<any>("/service/isp?includeInactive=true", { suppressToast: true })
       const list = res.data || res || []
       const providers = list.filter((s: any) => 
         s.service?.code === "AAKASHSMS" || s.service?.code === "SPARROWSMS"
