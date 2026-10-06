@@ -89,6 +89,7 @@ export function SystemSettings() {
     timezone: "Asia/Kathmandu",
     currency: "NPR",
     language: "en",
+    defaultCalendarSystem: "AD",
     maintenanceMode: false,
     autoBackup: true,
     emailNotifications: true,
@@ -229,6 +230,7 @@ export function SystemSettings() {
             timezone: data.timezone || prev.timezone,
             currency: data.currency || prev.currency,
             language: data.language || prev.language,
+            defaultCalendarSystem: data.defaultCalendarSystem || prev.defaultCalendarSystem || "AD",
             maintenanceMode: data.maintenanceMode === 'true',
             autoBackup: data.autoBackup !== 'false',
             emailNotifications: data.emailNotifications !== 'false',
@@ -710,8 +712,8 @@ export function SystemSettings() {
           </div>
         </CardContainer>
 
-        <CardContainer title="Regional Settings" description="Timezone, currency and language settings">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <CardContainer title="Regional Settings" description="Timezone, currency, language, and calendar system settings">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="space-y-2">
               <Label htmlFor="timezone">Timezone</Label>
               <Select value={settings.timezone} onValueChange={(value) => updateSetting("timezone", value)}>
@@ -750,6 +752,22 @@ export function SystemSettings() {
                   <SelectItem value="en">English</SelectItem>
                   <SelectItem value="ne">Nepali</SelectItem>
                   <SelectItem value="hi">Hindi</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="defaultCalendarSystem">Default Calendar System</Label>
+              <Select
+                value={settings.defaultCalendarSystem || "AD"}
+                onValueChange={(value) => updateSetting("defaultCalendarSystem", value)}
+              >
+                <SelectTrigger id="defaultCalendarSystem">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="AD">Gregorian (AD - International)</SelectItem>
+                  <SelectItem value="BS">Bikram Sambat (BS - Nepali Patro)</SelectItem>
                 </SelectContent>
               </Select>
             </div>

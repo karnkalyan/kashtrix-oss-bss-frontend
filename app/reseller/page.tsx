@@ -6,29 +6,12 @@ import { PageHeader } from "@/components/ui/page-header";
 import { CardContainer } from "@/components/ui/card-container";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from "@/components/ui/dialog";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select";
 import {
     Users, Plus, Search, Wallet, Percent, Phone, Mail,
     Edit3, Loader2, Building2
 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
-import { toast } from "react-hot-toast";
 import Link from "next/link";
 
 interface Reseller {
@@ -51,30 +34,6 @@ export default function ResellerPage() {
     const [resellers, setResellers] = useState<Reseller[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [search, setSearch] = useState("");
-    const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-    const [isSubmitting, setIsSubmitting] = useState(false);
-
-    const [formData, setFormData] = useState({
-        name: "",
-        code: "",
-        email: "",
-        password: "",
-        phoneNumber: "",
-        address: "",
-        city: "",
-        state: "",
-        zipCode: "",
-        country: "Nepal",
-        website: "",
-        legalName: "",
-        registrationNo: "",
-        panNo: "",
-        notes: "",
-        contactPerson: "",
-        commissionType: "PERCENTAGE",
-        commissionValue: "10",
-        initialWalletBalance: "0"
-    });
 
     const fetchResellers = async () => {
         try {
@@ -97,39 +56,6 @@ export default function ResellerPage() {
         return () => window.clearTimeout(timer);
     }, [search]);
 
-    const handleCreate = async () => {
-        if (!formData.name || !formData.code || !formData.email || formData.password.length < 8) {
-            toast.error("Name, code, email, and an 8-character password are required");
-            return;
-        }
-
-        try {
-            setIsSubmitting(true);
-            const response = await apiRequest<{ success: boolean; error?: string }>("/resellers", {
-                method: "POST",
-                body: JSON.stringify(formData)
-            });
-
-            if (response?.success) {
-                toast.success("Reseller created successfully");
-                setIsCreateModalOpen(false);
-                setFormData({
-                    name: "", code: "", email: "", password: "", phoneNumber: "", address: "",
-                    city: "", state: "", zipCode: "", country: "Nepal", website: "",
-                    legalName: "", registrationNo: "", panNo: "", notes: "", contactPerson: "", commissionType: "PERCENTAGE",
-                    commissionValue: "10", initialWalletBalance: "0"
-                });
-                fetchResellers();
-            } else {
-                toast.error(response?.error || "Failed to create reseller");
-            }
-        } catch (err: unknown) {
-            toast.error(err instanceof Error ? err.message : "Error creating reseller");
-        } finally {
-            setIsSubmitting(false);
-        }
-    };
-
     return (
         <DashboardLayout>
             <div className="space-y-6">
@@ -149,8 +75,10 @@ export default function ResellerPage() {
                             className="pl-9"
                         />
                     </div>
-                    <Button onClick={() => setIsCreateModalOpen(true)}>
-                        <Plus className="mr-2 h-4 w-4" /> Add Reseller
+                    <Button asChild>
+                        <Link href="/reseller/create">
+                            <Plus className="mr-2 h-4 w-4" /> Add Reseller
+                        </Link>
                     </Button>
                 </div>
 
@@ -232,146 +160,6 @@ export default function ResellerPage() {
                     </div>
                 )}
 
-                {/* Create Reseller Modal */}
-                <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
-                    <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
-                        <DialogHeader>
-                            <DialogTitle>Add Standalone Reseller</DialogTitle>
-                            <DialogDescription>Create a new reseller with an independent wallet</DialogDescription>
-                        </DialogHeader>
-
-                        <div className="space-y-3 py-2 text-sm">
-                            <div className="grid grid-cols-2 gap-3">
-                                <div className="space-y-1">
-                                    <Label>Reseller Name *</Label>
-                                    <Input
-                                        value={formData.name}
-                                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                                        placeholder="e.g. Acme Net"
-                                    />
-                                </div>
-                                <div className="space-y-1">
-                                    <Label>Unique Code *</Label>
-                                    <Input
-                                        value={formData.code}
-                                        onChange={(e) => setFormData({ ...formData, code: e.target.value.toUpperCase() })}
-                                        placeholder="e.g. RES001"
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-3">
-                                <div className="space-y-1">
-                                    <Label>Contact Person</Label>
-                                    <Input
-                                        value={formData.contactPerson}
-                                        onChange={(e) => setFormData({ ...formData, contactPerson: e.target.value })}
-                                        placeholder="Full name"
-                                    />
-                                </div>
-                                <div className="space-y-1">
-                                    <Label>Phone Number</Label>
-                                    <Input
-                                        value={formData.phoneNumber}
-                                        onChange={(e) => setFormData({ ...formData, phoneNumber: e.target.value })}
-                                        placeholder="98XXXXXXXX"
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="space-y-1">
-                                <Label>Login Email *</Label>
-                                <Input
-                                    type="email"
-                                    value={formData.email}
-                                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                                    placeholder="reseller@example.com"
-                                />
-                            </div>
-                            <div className="space-y-1">
-                                <Label>Temporary Password *</Label>
-                                <Input
-                                    type="password"
-                                    minLength={8}
-                                    value={formData.password}
-                                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                                    placeholder="Minimum 8 characters"
-                                />
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-3">
-                                <div className="space-y-1">
-                                    <Label>Legal Business Name</Label>
-                                    <Input value={formData.legalName} onChange={(e) => setFormData({ ...formData, legalName: e.target.value })} />
-                                </div>
-                                <div className="space-y-1">
-                                    <Label>Registration Number</Label>
-                                    <Input value={formData.registrationNo} onChange={(e) => setFormData({ ...formData, registrationNo: e.target.value })} />
-                                </div>
-                                <div className="space-y-1">
-                                    <Label>PAN / VAT Number</Label>
-                                    <Input value={formData.panNo} onChange={(e) => setFormData({ ...formData, panNo: e.target.value })} />
-                                </div>
-                                <div className="space-y-1">
-                                    <Label>Website</Label>
-                                    <Input value={formData.website} onChange={(e) => setFormData({ ...formData, website: e.target.value })} placeholder="https://" />
-                                </div>
-                            </div>
-
-                            <div className="space-y-1">
-                                <Label>Address</Label>
-                                <Input value={formData.address} onChange={(e) => setFormData({ ...formData, address: e.target.value })} />
-                            </div>
-                            <div className="grid grid-cols-4 gap-3">
-                                <div className="space-y-1"><Label>City</Label><Input value={formData.city} onChange={(e) => setFormData({ ...formData, city: e.target.value })} /></div>
-                                <div className="space-y-1"><Label>State</Label><Input value={formData.state} onChange={(e) => setFormData({ ...formData, state: e.target.value })} /></div>
-                                <div className="space-y-1"><Label>Postal Code</Label><Input value={formData.zipCode} onChange={(e) => setFormData({ ...formData, zipCode: e.target.value })} /></div>
-                                <div className="space-y-1"><Label>Country</Label><Input value={formData.country} onChange={(e) => setFormData({ ...formData, country: e.target.value })} /></div>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-3">
-                                <div className="space-y-1">
-                                    <Label>Commission Type</Label>
-                                    <Select
-                                        value={formData.commissionType}
-                                        onValueChange={(val) => setFormData({ ...formData, commissionType: val })}
-                                    >
-                                        <SelectTrigger><SelectValue /></SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="PERCENTAGE">Percentage (%)</SelectItem>
-                                            <SelectItem value="FLAT">Flat Amount (NPR)</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                                <div className="space-y-1">
-                                    <Label>Commission Value</Label>
-                                    <Input
-                                        type="number"
-                                        value={formData.commissionValue}
-                                        onChange={(e) => setFormData({ ...formData, commissionValue: e.target.value })}
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="space-y-1">
-                                <Label>Initial Wallet Balance (NPR)</Label>
-                                <Input
-                                    type="number"
-                                    value={formData.initialWalletBalance}
-                                    onChange={(e) => setFormData({ ...formData, initialWalletBalance: e.target.value })}
-                                    placeholder="0"
-                                />
-                            </div>
-                        </div>
-
-                        <DialogFooter>
-                            <Button variant="outline" onClick={() => setIsCreateModalOpen(false)}>Cancel</Button>
-                            <Button onClick={handleCreate} disabled={isSubmitting}>
-                                {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save Reseller"}
-                            </Button>
-                        </DialogFooter>
-                    </DialogContent>
-                </Dialog>
             </div>
         </DashboardLayout>
     );

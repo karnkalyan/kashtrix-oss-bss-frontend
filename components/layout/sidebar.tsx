@@ -31,6 +31,7 @@ import {
   Bot,
   Building2,
   Navigation,
+  Globe,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -354,10 +355,17 @@ const menuCategories: MenuCategory[] = [
           { title: "Nepurix Accounting", href: "/nepurix", permission: "services_read" },
           { title: "RADIUS Service", href: "/radius", permission: "services_read" },
           { title: "eSewa Transactions", href: "/services/esewa", permission: "services_read" },
+          { title: "External Payment API", href: "/externalpayment", permission: "services_read" },
           { title: "Aakash SMS Setup", href: "/services/aakashsms", permission: "services_read" },
           { title: "Yeastar PBX", href: "/yeaster", permission: "nav_yeastar" },
           { title: "Asterisk PBX", href: "/asterisk", permission: "asterisk_read" },
         ],
+      },
+      {
+        title: "External Payment API Requests",
+        icon: Globe,
+        href: "/externalpayment",
+        permission: "services_read",
       },
     ],
   },

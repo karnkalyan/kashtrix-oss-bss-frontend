@@ -21,9 +21,10 @@ export function bsToAd(value?: string | null): string {
   } catch { return "" }
 }
 
-export function formatSystemDate(value: string | Date | null | undefined, system: CalendarSystem) {
+export function formatSystemDate(value: string | Date | null | undefined, system?: CalendarSystem) {
   if (!value) return "—"
-  if (system === "BS") return adToBs(value) || "—"
+  const currentSystem = system || (typeof window !== "undefined" ? (localStorage.getItem("calendar-system-preference") as CalendarSystem) : "AD") || "AD"
+  if (currentSystem === "BS") return adToBs(value) || "—"
   const date = value instanceof Date ? value : new Date(value)
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleDateString()
 }

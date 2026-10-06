@@ -149,9 +149,14 @@ export async function apiRequest<T = any>(
 ): Promise<T> {
   const suppressToast = options.suppressToast === true;
   delete options.suppressToast;
-  // Get the URL dynamically for every request
   const BASE_URL = getDynamicBaseUrl().replace(/\/+$/, "");
-  const cleanEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+  let cleanEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+  
+  // Prevent duplicate /api/api/... if BASE_URL already has /api and endpoint starts with /api/
+  if (BASE_URL.endsWith("/api") && cleanEndpoint.startsWith("/api/")) {
+    cleanEndpoint = cleanEndpoint.substring(4);
+  }
+  
   const url = `${BASE_URL}${cleanEndpoint}`;
   const method = (options.method || "GET").toUpperCase();
   const canCoalesce = method === "GET" && !options.body;

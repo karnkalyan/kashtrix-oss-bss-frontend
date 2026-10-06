@@ -11,13 +11,17 @@ import {
   Zap,
   Smartphone,
   PhoneCall,
+  QrCode,
   ShieldCheck,
   CheckCircle2,
   ExternalLink,
   Eye,
   EyeOff,
-  Send
+  Send,
+  FileDown,
+  RefreshCw
 } from "lucide-react"
+import Link from "next/link"
 import { apiRequest } from "@/lib/api"
 import { toast } from "react-hot-toast"
 import { CardContainer } from "@/components/ui/card-container"
@@ -59,6 +63,20 @@ type GatewaysState = {
     keySecret: string
     webhookSecret: string
     currency: string
+  }
+  khalti: {
+    enabled: boolean
+    publicKey: string
+    secretKey: string
+    baseUrl: string
+    testMode: boolean
+  }
+  fonepay: {
+    enabled: boolean
+    merchantCode: string
+    secretKey: string
+    baseUrl: string
+    testMode: boolean
   }
   instapay: {
     enabled: boolean
@@ -116,11 +134,25 @@ export function PaymentGatewaySettings() {
       webhookSecret: "",
       currency: "INR"
     },
+    khalti: {
+      enabled: false,
+      publicKey: "",
+      secretKey: "",
+      baseUrl: "https://dev.khalti.com/api/v2",
+      testMode: true
+    },
+    fonepay: {
+      enabled: false,
+      merchantCode: "",
+      secretKey: "",
+      baseUrl: "https://dev-clientapi.fonepay.com",
+      testMode: true
+    },
     instapay: {
       enabled: false,
       merchantId: "",
       apiKey: "",
-      baseUrl: "https://api.instapay.ph/v1"
+      baseUrl: "https://api.instapay.org/v1"
     }
   })
 
@@ -149,8 +181,8 @@ export function PaymentGatewaySettings() {
       try {
         const [esewaRes, gatewaysRes, twilioRes] = await Promise.allSettled([
           apiRequest<EsewaConfig>("/settings/esewa/config"),
-          apiRequest<any>("/api/payment/gateways"),
-          apiRequest<any>("/api/twilio/config")
+          apiRequest<any>("/payment/gateways/all"),
+          apiRequest<any>("/twilio/config")
         ])
 
         if (esewaRes.status === "fulfilled" && esewaRes.value) {
@@ -181,11 +213,11 @@ export function PaymentGatewaySettings() {
   const saveGlobalGateways = async () => {
     setSaving(true)
     try {
-      await apiRequest("/api/payment/gateways", {
+      await apiRequest("/payment/gateways", {
         method: "PUT",
         body: JSON.stringify(gateways)
       })
-      toast.success("Global payment gateway settings saved!")
+      toast.success("Payment gateway settings saved successfully!")
     } catch (error: any) {
       toast.error(error.message || "Failed to save payment settings")
     } finally {
@@ -197,7 +229,7 @@ export function PaymentGatewaySettings() {
   const saveTwilioConfig = async () => {
     setSaving(true)
     try {
-      await apiRequest("/api/twilio/config", {
+      await apiRequest("/twilio/config", {
         method: "PUT",
         body: JSON.stringify(twilioConfig)
       })
@@ -214,7 +246,7 @@ export function PaymentGatewaySettings() {
     if (!testPhone.trim()) return toast.error("Enter phone number to receive test SMS")
     setTestingTwilio(true)
     try {
-      const res = await apiRequest<any>("/api/twilio/sms", {
+      const res = await apiRequest<any>("/twilio/sms", {
         method: "POST",
         body: JSON.stringify({
           to: testPhone.trim(),
@@ -293,8 +325,8 @@ export function PaymentGatewaySettings() {
 
   return (
     <CardContainer
-      title="Global Payment & Communication Gateways"
-      description="Manage enterprise payment services, digital wallets (Apple Pay, Google Pay, Card), Twilio SMS/Voice, and localized billing aggregators."
+      title="Payment & Communication Gateways"
+      description="Manage live and sandbox API credentials for Stripe, PayPal, Razorpay, Khalti, Fonepay, InstaPay, eSewa, and Twilio."
     >
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
         <TabsList className="bg-slate-900 border border-slate-800 p-1 flex flex-wrap gap-1">
@@ -307,18 +339,27 @@ export function PaymentGatewaySettings() {
           <TabsTrigger value="razorpay" className="gap-2 text-xs">
             <Zap className="h-3.5 w-3.5 text-sky-400" /> Razorpay
           </TabsTrigger>
+          <TabsTrigger value="khalti" className="gap-2 text-xs">
+            <Zap className="h-3.5 w-3.5 text-purple-400" /> Khalti (ePayment v2)
+          </TabsTrigger>
+          <TabsTrigger value="fonepay" className="gap-2 text-xs">
+            <QrCode className="h-3.5 w-3.5 text-red-400" /> Fonepay (QR / Banking)
+          </TabsTrigger>
           <TabsTrigger value="instapay" className="gap-2 text-xs">
             <Smartphone className="h-3.5 w-3.5 text-violet-400" /> InstaPay
           </TabsTrigger>
           <TabsTrigger value="esewa" className="gap-2 text-xs">
             <Zap className="h-3.5 w-3.5 text-emerald-400" /> eSewa & Aggregator
           </TabsTrigger>
+          <TabsTrigger value="externalpayment" className="gap-2 text-xs">
+            <Globe className="h-3.5 w-3.5 text-amber-400" /> External Payment Gateway API
+          </TabsTrigger>
           <TabsTrigger value="twilio" className="gap-2 text-xs">
             <PhoneCall className="h-3.5 w-3.5 text-rose-400" /> Twilio (SMS & Voice)
           </TabsTrigger>
         </TabsList>
 
-        {/* ================= STRIPE & WALLETS ================= */}
+        {/* ================= STRIPE ================= */}
         <TabsContent value="stripe" className="space-y-5">
           <div className="flex items-center justify-between p-4 rounded-xl border border-indigo-500/20 bg-indigo-950/20">
             <div>
@@ -329,7 +370,7 @@ export function PaymentGatewaySettings() {
                 </Badge>
               </div>
               <p className="text-xs text-slate-400 mt-1">
-                Enables Visa, MasterCard, American Express, Apple Pay, Google Pay, and Link checkout.
+                Official Stripe API for Visa, MasterCard, American Express, Apple Pay, Google Pay, and Link checkout.
               </p>
             </div>
             <Switch
@@ -440,7 +481,7 @@ export function PaymentGatewaySettings() {
                 </Badge>
               </div>
               <p className="text-xs text-slate-400 mt-1">
-                REST v2 Orders API with Smart Payment Buttons and PayPal credit/balance funding.
+                Official PayPal REST v2 Orders API with Smart Payment Buttons and PayPal balance funding.
               </p>
             </div>
             <Switch
@@ -541,7 +582,7 @@ export function PaymentGatewaySettings() {
                 </Badge>
               </div>
               <p className="text-xs text-slate-400 mt-1">
-                Support for UPI, RuPay, NetBanking, Cards and international transactions.
+                Official Razorpay Orders API for UPI, RuPay, NetBanking, and credit/debit cards.
               </p>
             </div>
             <Switch
@@ -604,6 +645,212 @@ export function PaymentGatewaySettings() {
           </div>
         </TabsContent>
 
+        {/* ================= KHALTI ================= */}
+        <TabsContent value="khalti" className="space-y-5">
+          <div className="flex items-center justify-between p-4 rounded-xl border border-purple-500/20 bg-purple-950/20">
+            <div>
+              <div className="flex items-center gap-2">
+                <Label className="text-base font-bold text-white">Khalti ePayment v2 Gateway</Label>
+                <Badge className={gateways.khalti.enabled ? "bg-emerald-500/20 text-emerald-300" : "bg-slate-800 text-slate-400"}>
+                  {gateways.khalti.enabled ? "Enabled" : "Disabled"}
+                </Badge>
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                Official Khalti ePayment v2 API with instant lookup verification, wallet recharge, and mobile banking.
+              </p>
+            </div>
+            <Switch
+              checked={gateways.khalti.enabled}
+              onCheckedChange={(enabled) =>
+                setGateways(prev => ({ ...prev, khalti: { ...prev.khalti, enabled } }))
+              }
+            />
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label className="text-xs">Khalti Public Key</Label>
+              <Input
+                placeholder="live_public_key_... or test_public_key_..."
+                value={gateways.khalti.publicKey}
+                onChange={(e) =>
+                  setGateways(prev => ({ ...prev, khalti: { ...prev.khalti, publicKey: e.target.value } }))
+                }
+                className="bg-slate-950 border-slate-800 text-xs font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Khalti Secret Key</Label>
+                <button
+                  type="button"
+                  onClick={() => toggleSecret("khaltiSecret")}
+                  className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1"
+                >
+                  {showSecrets.khaltiSecret ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                  {showSecrets.khaltiSecret ? "Hide" : "Show"}
+                </button>
+              </div>
+              <Input
+                type={showSecrets.khaltiSecret ? "text" : "password"}
+                placeholder="live_secret_key_... or test_secret_key_..."
+                value={gateways.khalti.secretKey}
+                onChange={(e) =>
+                  setGateways(prev => ({ ...prev, khalti: { ...prev.khalti, secretKey: e.target.value } }))
+                }
+                className="bg-slate-950 border-slate-800 text-xs font-mono"
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label className="text-xs">Base API URL</Label>
+              <Input
+                placeholder="https://khalti.com/api/v2 or https://dev.khalti.com/api/v2"
+                value={gateways.khalti.baseUrl}
+                onChange={(e) =>
+                  setGateways(prev => ({ ...prev, khalti: { ...prev.khalti, baseUrl: e.target.value } }))
+                }
+                className="bg-slate-950 border-slate-800 text-xs font-mono"
+              />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950 p-3">
+              <div>
+                <Label className="text-xs">Test Mode (dev.khalti.com)</Label>
+                <p className="text-[10px] text-slate-500">Test with Khalti sandbox ID (9800000000, MPIN 1111, OTP 987654)</p>
+              </div>
+              <Switch
+                checked={gateways.khalti.testMode}
+                onCheckedChange={(testMode) =>
+                  setGateways(prev => ({
+                    ...prev,
+                    khalti: {
+                      ...prev.khalti,
+                      testMode,
+                      baseUrl: testMode ? "https://dev.khalti.com/api/v2" : "https://khalti.com/api/v2"
+                    }
+                  }))
+                }
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between pt-2">
+            <a
+              href="https://admin.khalti.com/#/account"
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs text-purple-400 hover:underline flex items-center gap-1"
+            >
+              Khalti Merchant Dashboard <ExternalLink className="h-3 w-3" />
+            </a>
+            <Button onClick={saveGlobalGateways} disabled={saving} className="bg-purple-600 hover:bg-purple-700 text-white gap-2">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Save Khalti Settings
+            </Button>
+          </div>
+        </TabsContent>
+
+        {/* ================= FONEPAY ================= */}
+        <TabsContent value="fonepay" className="space-y-5">
+          <div className="flex items-center justify-between p-4 rounded-xl border border-red-500/20 bg-red-950/20">
+            <div>
+              <div className="flex items-center gap-2">
+                <Label className="text-base font-bold text-white">Fonepay Direct QR & Merchant Payment</Label>
+                <Badge className={gateways.fonepay.enabled ? "bg-emerald-500/20 text-emerald-300" : "bg-slate-800 text-slate-400"}>
+                  {gateways.fonepay.enabled ? "Enabled" : "Disabled"}
+                </Badge>
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                Official Fonepay Web Payment integration with HMAC-SHA512 Data Validation (DV) generation and verification.
+              </p>
+            </div>
+            <Switch
+              checked={gateways.fonepay.enabled}
+              onCheckedChange={(enabled) =>
+                setGateways(prev => ({ ...prev, fonepay: { ...prev.fonepay, enabled } }))
+              }
+            />
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label className="text-xs">Merchant Code (PID)</Label>
+              <Input
+                placeholder="Merchant PID assigned by Fonepay / Bank"
+                value={gateways.fonepay.merchantCode}
+                onChange={(e) =>
+                  setGateways(prev => ({ ...prev, fonepay: { ...prev.fonepay, merchantCode: e.target.value } }))
+                }
+                className="bg-slate-950 border-slate-800 text-xs font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Shared Secret Key</Label>
+                <button
+                  type="button"
+                  onClick={() => toggleSecret("fonepaySecret")}
+                  className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1"
+                >
+                  {showSecrets.fonepaySecret ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                  {showSecrets.fonepaySecret ? "Hide" : "Show"}
+                </button>
+              </div>
+              <Input
+                type={showSecrets.fonepaySecret ? "text" : "password"}
+                placeholder="Shared secret key for HMAC-SHA512"
+                value={gateways.fonepay.secretKey}
+                onChange={(e) =>
+                  setGateways(prev => ({ ...prev, fonepay: { ...prev.fonepay, secretKey: e.target.value } }))
+                }
+                className="bg-slate-950 border-slate-800 text-xs font-mono"
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label className="text-xs">Base API URL</Label>
+              <Input
+                placeholder="https://clientapi.fonepay.com or https://dev-clientapi.fonepay.com"
+                value={gateways.fonepay.baseUrl}
+                onChange={(e) =>
+                  setGateways(prev => ({ ...prev, fonepay: { ...prev.fonepay, baseUrl: e.target.value } }))
+                }
+                className="bg-slate-950 border-slate-800 text-xs font-mono"
+              />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950 p-3">
+              <div>
+                <Label className="text-xs">Test Mode (dev-clientapi.fonepay.com)</Label>
+                <p className="text-[10px] text-slate-500">Enable to process payments via Fonepay test environment</p>
+              </div>
+              <Switch
+                checked={gateways.fonepay.testMode}
+                onCheckedChange={(testMode) =>
+                  setGateways(prev => ({
+                    ...prev,
+                    fonepay: {
+                      ...prev.fonepay,
+                      testMode,
+                      baseUrl: testMode ? "https://dev-clientapi.fonepay.com" : "https://clientapi.fonepay.com"
+                    }
+                  }))
+                }
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end pt-2">
+            <Button onClick={saveGlobalGateways} disabled={saving} className="bg-red-600 hover:bg-red-700 text-white gap-2">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Save Fonepay Settings
+            </Button>
+          </div>
+        </TabsContent>
+
         {/* ================= INSTAPAY ================= */}
         <TabsContent value="instapay" className="space-y-5">
           <div className="flex items-center justify-between p-4 rounded-xl border border-violet-500/20 bg-violet-950/20">
@@ -635,7 +882,7 @@ export function PaymentGatewaySettings() {
                 onChange={(e) =>
                   setGateways(prev => ({ ...prev, instapay: { ...prev.instapay, merchantId: e.target.value } }))
                 }
-                className="bg-slate-950 border-slate-800 text-xs"
+                className="bg-slate-950 border-slate-800 text-xs font-mono"
               />
             </div>
             <div className="space-y-2">
@@ -806,9 +1053,9 @@ export function PaymentGatewaySettings() {
 
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
-              <Label className="text-xs">From Phone Number</Label>
+              <Label className="text-xs">Twilio From Phone Number</Label>
               <Input
-                placeholder="+1234567890"
+                placeholder="+1xxxxxxxxxx"
                 value={twilioConfig.fromNumber}
                 onChange={(e) => setTwilioConfig(prev => ({ ...prev, fromNumber: e.target.value }))}
                 className="bg-slate-950 border-slate-800 text-xs font-mono"
@@ -825,23 +1072,17 @@ export function PaymentGatewaySettings() {
             </div>
           </div>
 
-          {/* Test SMS box */}
-          <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
-            <Label className="text-xs text-slate-300 font-semibold">Test Twilio Outbound SMS</Label>
+          <div className="p-4 rounded-xl border border-slate-800 bg-slate-950 space-y-3">
+            <Label className="text-xs font-bold text-white">Send Twilio Test SMS</Label>
             <div className="flex gap-2">
               <Input
-                placeholder="Receiver phone number (e.g. +9779800000000)"
+                placeholder="Enter destination phone number (+977... or +1...)"
                 value={testPhone}
                 onChange={(e) => setTestPhone(e.target.value)}
                 className="bg-slate-900 border-slate-800 text-xs"
               />
-              <Button
-                variant="outline"
-                onClick={testTwilioSms}
-                disabled={testingTwilio || !twilioConfig.enabled}
-                className="shrink-0 gap-1 border-slate-700 text-xs"
-              >
-                {testingTwilio ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+              <Button onClick={testTwilioSms} disabled={testingTwilio} className="bg-rose-600 hover:bg-rose-700 text-white gap-2 shrink-0">
+                {testingTwilio ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                 Send Test SMS
               </Button>
             </div>
@@ -862,7 +1103,251 @@ export function PaymentGatewaySettings() {
             </Button>
           </div>
         </TabsContent>
+
+        {/* ================= EXTERNAL PAYMENT GATEWAY API ================= */}
+        <TabsContent value="externalpayment" className="space-y-5">
+          <ExternalPaymentSettingsContent />
+        </TabsContent>
       </Tabs>
     </CardContainer>
+  )
+}
+
+function ExternalPaymentSettingsContent() {
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [config, setConfig] = useState<any>({
+    enabled: true,
+    username: "",
+    passwordConfigured: false,
+    defaultPaymentMode: "EXTERNAL"
+  })
+  const [newPassword, setNewPassword] = useState("")
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
+
+  const origin = typeof window !== "undefined" ? window.location.origin : "https://isp.yourdomain.com"
+
+  useEffect(() => {
+    apiRequest<any>("/settings/externalpayment/config")
+      .then(res => {
+        if (res) setConfig(res)
+      })
+      .catch((err) => {
+        toast.error(err.message || "Failed to load External Payment configuration")
+      })
+      .finally(() => setLoading(false))
+  }, [])
+
+  const handleGenerateCredentials = () => {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+    const ispNum = config?.ispId || 1
+    let rnd = ""
+    for (let i = 0; i < 6; i++) rnd += chars.charAt(Math.floor(Math.random() * chars.length))
+    const rndUser = `ext_isp${ispNum}_${rnd}`
+
+    let rndPass = `Ext#ISP${ispNum}!`
+    for (let i = 0; i < 8; i++) rndPass += chars.charAt(Math.floor(Math.random() * chars.length))
+    rndPass += "2026"
+
+    setConfig((prev: any) => ({ ...prev, username: rndUser }))
+    setNewPassword(rndPass)
+    toast.success(`Generated credentials for ISP ${ispNum}! Click Save to apply.`)
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const payload: any = {
+        enabled: config.enabled,
+        username: config.username,
+        defaultPaymentMode: config.defaultPaymentMode || "EXTERNAL"
+      }
+      if (newPassword.trim()) {
+        payload.password = newPassword.trim()
+      }
+
+      await apiRequest("/settings/externalpayment/config", {
+        method: "PUT",
+        body: JSON.stringify(payload)
+      })
+
+      setConfig((prev: any) => ({
+        ...prev,
+        passwordConfigured: prev.passwordConfigured || Boolean(newPassword.trim())
+      }))
+      setNewPassword("")
+      toast.success("External Payment configuration saved successfully!")
+    } catch (err: any) {
+      toast.error(err.message || "Failed to save External Payment configuration")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const copy = async (value: string, key: string) => {
+    if (!value) return
+    await navigator.clipboard.writeText(value)
+    setCopiedKey(key)
+    toast.success("Copied to clipboard")
+    setTimeout(() => setCopiedKey(null), 2000)
+  }
+
+  if (loading) {
+    return (
+      <div className="flex justify-center p-12">
+        <Loader2 className="h-6 w-6 animate-spin text-amber-500" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between p-4 rounded-xl border border-amber-500/20 bg-amber-950/20">
+        <div>
+          <div className="flex items-center gap-2">
+            <Label className="text-base font-bold text-white">External Payment Gateway API</Label>
+            <Badge className={config.enabled ? "bg-emerald-500/20 text-emerald-300" : "bg-slate-800 text-slate-400"}>
+              {config.enabled ? "Active" : "Disabled"}
+            </Badge>
+          </div>
+          <p className="text-xs text-slate-400 mt-1">
+            Permit external payment gateways, banks, and third-party apps to authenticate and push instant renewals.
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <Switch
+            checked={config.enabled}
+            onCheckedChange={(enabled) => setConfig((prev: any) => ({ ...prev, enabled }))}
+          />
+          <Link href="/externalpayment">
+            <Button variant="outline" size="sm" className="text-xs">
+              View Transactions
+            </Button>
+          </Link>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-2">
+          <Label className="text-xs font-semibold">Gateway API Username</Label>
+          <div className="flex gap-2">
+            <Input
+              value={config.username || ""}
+              onChange={(e) => setConfig((prev: any) => ({ ...prev, username: e.target.value }))}
+              placeholder="e.g. external_isp_1"
+              className="bg-slate-950 border-slate-800 text-xs font-mono"
+            />
+            <Button
+              variant="outline"
+              size="icon"
+              type="button"
+              onClick={() => copy(config.username, "ext-user")}
+              disabled={!config.username}
+            >
+              {copiedKey === "ext-user" ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
+            </Button>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label className="text-xs font-semibold">Default Payment Mode</Label>
+          <Input
+            value={config.defaultPaymentMode || "EXTERNAL"}
+            onChange={(e) => setConfig((prev: any) => ({ ...prev, defaultPaymentMode: e.target.value.toUpperCase() }))}
+            placeholder="EXTERNAL, CASH, ONLINE, etc."
+            className="bg-slate-950 border-slate-800 text-xs font-mono"
+          />
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <Label className="text-xs font-semibold">Gateway Password / Shared Secret</Label>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={handleGenerateCredentials}
+            className="text-xs text-amber-400 h-6 px-2 hover:text-amber-300"
+          >
+            <RefreshCw className="h-3 w-3 mr-1" /> Generate Random Credentials
+          </Button>
+        </div>
+        <div className="flex gap-2">
+          <Input
+            type="text"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            placeholder={config.passwordConfigured ? "●●●●●●●● (Configured - enter new to change)" : "Minimum 8 characters"}
+            className="bg-slate-950 border-slate-800 text-xs font-mono"
+          />
+          {newPassword && (
+            <Button
+              variant="outline"
+              size="icon"
+              type="button"
+              onClick={() => copy(newPassword, "ext-pass")}
+            >
+              {copiedKey === "ext-pass" ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Integration Reference Snippets */}
+      <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/70 space-y-4">
+        <div className="flex items-center justify-between">
+          <Label className="text-xs font-bold text-white">cURL Inbound Recharge Example</Label>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 text-xs"
+            onClick={() =>
+              copy(
+                `curl -X POST "${origin}/api/externalpayment/payment" \\
+  -H "Content-Type: application/json" \\
+  -u "${config.username || "external_isp_1"}:<password>" \\
+  -d '{
+    "username": "karnkalyan",
+    "lookup_type": "all",
+    "payment_mode": "${config.defaultPaymentMode || "EXTERNAL"}",
+    "duration": "1 month"
+  }'`,
+                "curl-pay"
+              )
+            }
+          >
+            {copiedKey === "curl-pay" ? <CheckCircle2 className="h-3.5 w-3.5 mr-1 text-emerald-400" /> : <Copy className="h-3.5 w-3.5 mr-1" />}
+            Copy cURL
+          </Button>
+        </div>
+        <pre className="p-3 bg-zinc-950 text-zinc-200 rounded-md text-xs font-mono overflow-x-auto">
+{`curl -X POST "${origin}/api/externalpayment/payment" \\
+  -H "Content-Type: application/json" \\
+  -u "${config.username || "external_isp_1"}:<password>" \\
+  -d '{
+    "username": "karnkalyan",
+    "lookup_type": "all",
+    "payment_mode": "${config.defaultPaymentMode || "EXTERNAL"}",
+    "duration": "1 month"
+  }'`}
+        </pre>
+      </div>
+
+      <div className="flex items-center justify-between pt-2">
+        <a
+          href="/api/externalpayment/documentation/pdf"
+          target="_blank"
+          download="External_Payment_API_Documentation.pdf"
+          className="text-xs text-amber-400 hover:underline flex items-center gap-1.5"
+        >
+          <FileDown className="h-3.5 w-3.5" /> Download Official Integration PDF
+        </a>
+        <Button onClick={handleSave} disabled={saving} className="bg-amber-600 hover:bg-amber-700 text-white gap-2">
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+          Save External Payment Config
+        </Button>
+      </div>
+    </div>
   )
 }

@@ -19,6 +19,7 @@ import { PaymentGatewaySettings } from "./payment-gateway-settings"
 import { ThemeEditor } from "./theme-editor"
 import { ApiTokenSettings } from "./api-token-settings"
 import { DatabaseBackupSettings } from "./database-backup-settings"
+import { McpSettings } from "./mcp-settings"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -139,6 +140,7 @@ export function MasterSettingsTabs() {
           <TabsTrigger value="payment-gateway">Global Payment & Twilio</TabsTrigger>
           <TabsTrigger value="radius-pools">RADIUS Pools</TabsTrigger>
           <TabsTrigger value="services-sync">Services Sync</TabsTrigger>
+          <TabsTrigger value="mcp">MCP Tools & AI</TabsTrigger>
           <TabsTrigger value="api-tokens">API Tokens & Docs</TabsTrigger>
           <TabsTrigger value="notifications">Notifications & WhatsApp</TabsTrigger>
           {showLicense && <TabsTrigger value="license">License</TabsTrigger>}
@@ -196,6 +198,9 @@ export function MasterSettingsTabs() {
           <CardContainer title="Services Sync Manager" description="Sync packages, plans, devices, and VoIP log integrations across services" gradientColor="#f59e0b">
             <ServicesSyncSettings />
           </CardContainer>
+        </TabsContent>
+        <TabsContent value="mcp">
+          <McpSettings />
         </TabsContent>
         <TabsContent value="api-tokens">
           <ApiTokenSettings />

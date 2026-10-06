@@ -1,9 +1,19 @@
+import { adToBs } from "@/lib/calendar-system"
+
 export type MissingValueState =
   | "unavailable"
   | "unsupported"
   | "collecting"
   | "failed"
   | "empty"
+
+export function getActiveCalendarPreference(): "AD" | "BS" {
+  if (typeof window !== "undefined") {
+    const pref = localStorage.getItem("calendar-system-preference")
+    if (pref === "BS" || pref === "AD") return pref
+  }
+  return "AD"
+}
 
 const missingLabels: Record<MissingValueState, string> = {
   unavailable: "Unavailable",
@@ -106,6 +116,15 @@ export function formatLocalDateTime(
   if (value === null || value === undefined || value === "") return missingValue()
   const date = value instanceof Date ? value : new Date(value)
   if (Number.isNaN(date.getTime())) return missingValue("failed")
+
+  if (getActiveCalendarPreference() === "BS") {
+    const bs = adToBs(date)
+    if (bs) {
+      const timeStr = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      return `${bs} BS, ${timeStr}`
+    }
+  }
+
   return new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
     timeStyle: "short",
@@ -117,6 +136,12 @@ export function formatLocalDate(value: string | number | Date | null | undefined
   if (value === null || value === undefined || value === "") return missingValue()
   const date = value instanceof Date ? value : new Date(value)
   if (Number.isNaN(date.getTime())) return missingValue("failed")
+
+  if (getActiveCalendarPreference() === "BS") {
+    const bs = adToBs(date)
+    if (bs) return `${bs} BS`
+  }
+
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(date)
 }
 
